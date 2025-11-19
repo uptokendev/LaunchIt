@@ -1,0 +1,222 @@
+import { expect } from "chai";
+import hre from "hardhat";
+
+const { ethers } = await hre.network.connect();
+const { parseEther } = ethers;
+
+// Helper to build a sane InitParams object
+function buildInitParams(tokenAddress, overrides = {}) {
+  return {
+    token: tokenAddress,
+    tierSize: parseEther("1000"),          // 1000 tokens per tier
+    startPrice: parseEther("0.0001"),      // 0.0001 BNB per token
+    priceStep: parseEther("0.00001"),      // +0.00001 BNB per tier
+    maxTiersPerTx: 10,
+    platformFeeBps: 500,                   // 5%
+    endTime: 0n,                           // no time limit
+    hardCapBNB: 0n,                        // unlimited
+    lpPercent: 7000,                       // 70% to LP
+    router: overrides.router || overrides.owner || tokenAddress, // dummy non-zero
+    treasury: overrides.treasury || overrides.owner,
+    payout: overrides.payout || overrides.owner,
+    mode: overrides.mode ?? 0,             // 0 = Mode.Minter
+    ...overrides,
+  };
+}
+
+describe("BondingCurveSale", function () {
+  let owner, user, other;
+  let token;
+  let sale;
+
+  beforeEach(async function () {
+    [owner, user, other] = await ethers.getSigners();
+
+    // Deploy TokenTemplate as the sale token
+    const TokenTemplate = await ethers.getContractFactory("TokenTemplate");
+    token = await TokenTemplate.deploy();
+    await token.waitForDeployment();
+
+    // Deploy BondingCurveSale implementation
+    const BondingCurveSale = await ethers.getContractFactory("BondingCurveSale");
+    sale = await BondingCurveSale.deploy();
+    await sale.waitForDeployment();
+  });
+
+  it("initializes sale with params and sets owner & paused", async function () {
+    const tokenAddr = await token.getAddress();
+
+    const params = buildInitParams(tokenAddr, {
+      owner: owner.address,
+      treasury: owner.address,
+      payout: user.address,
+      mode: 0, // Minter
+    });
+
+    await sale.connect(owner).initialize(params);
+
+    expect(await sale.token()).to.equal(tokenAddr);
+    expect(await sale.tierSize()).to.equal(params.tierSize);
+    expect(await sale.startPrice()).to.equal(params.startPrice);
+    expect(await sale.maxTiersPerTx()).to.equal(params.maxTiersPerTx);
+    expect(await sale.platformFeeBps()).to.equal(params.platformFeeBps);
+    expect(await sale.lpPercent()).to.equal(params.lpPercent);
+    expect(await sale.owner()).to.equal(owner.address);
+
+    // Pausable: sale should start paused after initialize()
+    expect(await sale.paused()).to.equal(true);
+  });
+
+  it("reverts if initialize() is called twice", async function () {
+    const tokenAddr = await token.getAddress();
+
+    const params = buildInitParams(tokenAddr, {
+      owner: owner.address,
+      treasury: owner.address,
+      payout: user.address,
+    });
+
+    await sale.connect(owner).initialize(params);
+
+    let error;
+    try {
+      await sale.connect(owner).initialize(params);
+    } catch (e) {
+      error = e;
+    }
+
+    expect(error).to.be.an("Error");
+    expect(String(error.message)).to.include("Already initialized");
+  });
+
+  it("allows owner to run audit() in Minter mode and marks audited", async function () {
+    const tokenAddr = await token.getAddress();
+
+    const params = buildInitParams(tokenAddr, {
+      owner: owner.address,
+      treasury: owner.address,
+      payout: user.address,
+      mode: 0, // Minter
+    });
+
+    await sale.connect(owner).initialize(params);
+
+    // TokenTemplate.decimals() returns 18, so audit should pass
+    await sale.connect(owner).audit();
+
+    expect(await sale.audited()).to.equal(true);
+  });
+
+  it("owner can buy in Minter mode, minting tokens and updating accounting", async function () {
+    const tokenAddr = await token.getAddress();
+
+    const params = buildInitParams(tokenAddr, {
+      owner: owner.address,
+      treasury: owner.address,
+      payout: user.address,
+      mode: 0, // Minter
+    });
+
+    await sale.connect(owner).initialize(params);
+
+    // Grant MINTER_ROLE to the sale so internal mint() calls succeed
+    const saleAddr = await sale.getAddress();
+    await token.connect(owner).grantMinter(saleAddr);
+
+    // Unpause sale before buying
+    await sale.connect(owner).unpauseSale();
+
+    const bnbIn = parseEther("1");
+    const minTokensOut = 0n;
+    const deadline = 0n;
+
+    const tx = await sale
+      .connect(owner)
+      .buy(minTokensOut, deadline, { value: bnbIn });
+
+    await tx.wait();
+
+    const sold = await sale.sold();
+    const raised = await sale.raised();
+    const ownerBal = await token.balanceOf(owner.address);
+
+    // Basic sanity checks
+    expect(sold).to.be.gt(0n);
+    expect(raised).to.equal(bnbIn);
+    expect(ownerBal).to.be.gt(0n);
+  });
+
+  it("non-owner cannot buy while externalOk is false", async function () {
+    const tokenAddr = await token.getAddress();
+
+    const params = buildInitParams(tokenAddr, {
+      owner: owner.address,
+      treasury: owner.address,
+      payout: user.address,
+      mode: 0, // Minter
+    });
+
+    await sale.connect(owner).initialize(params);
+    await sale.connect(owner).unpauseSale();
+
+    let error;
+    try {
+      await sale
+        .connect(user)
+        .buy(0n, 0n, { value: parseEther("0.1") });
+    } catch (e) {
+      error = e;
+    }
+
+    expect(error).to.be.an("Error");
+    expect(String(error.message)).to.include("External not OK");
+  });
+
+  it("unpauseSale can only be called by the owner", async function () {
+    const tokenAddr = await token.getAddress();
+
+    const params = buildInitParams(tokenAddr, {
+      owner: owner.address,
+      treasury: owner.address,
+      payout: user.address,
+      mode: 0, // Minter
+    });
+
+    await sale.connect(owner).initialize(params);
+
+    // Non-owner call should revert
+    let error;
+    try {
+      await sale.connect(user).unpauseSale();
+    } catch (e) {
+      error = e;
+    }
+
+    expect(error).to.be.an("Error");
+
+    // Owner call should succeed
+    await sale.connect(owner).unpauseSale();
+    expect(await sale.paused()).to.equal(false);
+  });
+
+  it("quoteTokensOut returns non-zero tokens for a reasonable BNB input", async function () {
+    const tokenAddr = await token.getAddress();
+
+    const params = buildInitParams(tokenAddr, {
+      owner: owner.address,
+      treasury: owner.address,
+      payout: user.address,
+      mode: 0, // Minter
+    });
+
+    await sale.connect(owner).initialize(params);
+
+    const bnbIn = parseEther("1");
+    const [tokensOut, bnbUsed, tiersCrossed] =
+      await sale.quoteTokensOut(bnbIn);
+
+    expect(tokensOut).to.be.gt(0n);
+    expect(bnbUsed).to.be.gt(0n);
+    expect(tiersCrossed).to.be.gte(0n);
+  });
+});
