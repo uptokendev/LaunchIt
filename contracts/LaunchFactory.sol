@@ -22,14 +22,20 @@ contract LaunchFactory is Ownable {
         address creator;
         string name;
         string symbol;
-        string metadataURI;
+        string logoURI;
+        string xAccount;
+        string website;
+        string extraLink;
         uint64 createdAt;
     }
 
     struct CampaignRequest {
         string name;
         string symbol;
-        string metadataURI;
+        string logoURI;
+        string xAccount;
+        string website;
+        string extraLink;
         uint256 basePrice;
         uint256 priceSlope;
         uint256 graduationTarget;
@@ -80,11 +86,15 @@ contract LaunchFactory is Ownable {
     {
         require(bytes(req.name).length > 0, "name");
         require(bytes(req.symbol).length > 0, "symbol");
+        require(bytes(req.logoURI).length > 0, "logo uri");
 
         LaunchCampaign.InitParams memory params = LaunchCampaign.InitParams({
             name: req.name,
             symbol: req.symbol,
-            metadataURI: req.metadataURI,
+            logoURI: req.logoURI,
+            xAccount: req.xAccount,
+            website: req.website,
+            extraLink: req.extraLink,
             totalSupply: config.totalSupply,
             curveBps: config.curveBps,
             liquidityTokenBps: config.liquidityTokenBps,
@@ -115,7 +125,10 @@ contract LaunchFactory is Ownable {
                 creator: msg.sender,
                 name: req.name,
                 symbol: req.symbol,
-                metadataURI: req.metadataURI,
+                logoURI: req.logoURI,
+                xAccount: req.xAccount,
+                website: req.website,
+                extraLink: req.extraLink,
                 createdAt: uint64(block.timestamp)
             })
         );

@@ -27,7 +27,10 @@ export declare namespace LaunchCampaign {
   export type InitParamsStruct = {
     name: string;
     symbol: string;
-    metadataURI: string;
+    logoURI: string;
+    xAccount: string;
+    website: string;
+    extraLink: string;
     totalSupply: BigNumberish;
     curveBps: BigNumberish;
     liquidityTokenBps: BigNumberish;
@@ -46,7 +49,10 @@ export declare namespace LaunchCampaign {
   export type InitParamsStructOutput = [
     name: string,
     symbol: string,
-    metadataURI: string,
+    logoURI: string,
+    xAccount: string,
+    website: string,
+    extraLink: string,
     totalSupply: bigint,
     curveBps: bigint,
     liquidityTokenBps: bigint,
@@ -63,7 +69,10 @@ export declare namespace LaunchCampaign {
   ] & {
     name: string;
     symbol: string;
-    metadataURI: string;
+    logoURI: string;
+    xAccount: string;
+    website: string;
+    extraLink: string;
     totalSupply: bigint;
     curveBps: bigint;
     liquidityTokenBps: bigint;
@@ -88,6 +97,7 @@ export interface LaunchCampaignInterface extends Interface {
       | "creatorReserve"
       | "currentPrice"
       | "curveSupply"
+      | "extraLink"
       | "factory"
       | "feeRecipient"
       | "finalize"
@@ -96,8 +106,8 @@ export interface LaunchCampaignInterface extends Interface {
       | "launched"
       | "liquidityBps"
       | "liquiditySupply"
+      | "logoURI"
       | "lpReceiver"
-      | "metadataURI"
       | "owner"
       | "priceSlope"
       | "protocolFeeBps"
@@ -110,6 +120,8 @@ export interface LaunchCampaignInterface extends Interface {
       | "token"
       | "totalSupply"
       | "transferOwnership"
+      | "website"
+      | "xAccount"
   ): FunctionFragment;
 
   getEvent(
@@ -137,6 +149,7 @@ export interface LaunchCampaignInterface extends Interface {
     functionFragment: "curveSupply",
     values?: undefined
   ): string;
+  encodeFunctionData(functionFragment: "extraLink", values?: undefined): string;
   encodeFunctionData(functionFragment: "factory", values?: undefined): string;
   encodeFunctionData(
     functionFragment: "feeRecipient",
@@ -163,12 +176,9 @@ export interface LaunchCampaignInterface extends Interface {
     functionFragment: "liquiditySupply",
     values?: undefined
   ): string;
+  encodeFunctionData(functionFragment: "logoURI", values?: undefined): string;
   encodeFunctionData(
     functionFragment: "lpReceiver",
-    values?: undefined
-  ): string;
-  encodeFunctionData(
-    functionFragment: "metadataURI",
     values?: undefined
   ): string;
   encodeFunctionData(functionFragment: "owner", values?: undefined): string;
@@ -207,6 +217,8 @@ export interface LaunchCampaignInterface extends Interface {
     functionFragment: "transferOwnership",
     values: [AddressLike]
   ): string;
+  encodeFunctionData(functionFragment: "website", values?: undefined): string;
+  encodeFunctionData(functionFragment: "xAccount", values?: undefined): string;
 
   decodeFunctionResult(functionFragment: "basePrice", data: BytesLike): Result;
   decodeFunctionResult(
@@ -225,6 +237,7 @@ export interface LaunchCampaignInterface extends Interface {
     functionFragment: "curveSupply",
     data: BytesLike
   ): Result;
+  decodeFunctionResult(functionFragment: "extraLink", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "factory", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "feeRecipient",
@@ -248,11 +261,8 @@ export interface LaunchCampaignInterface extends Interface {
     functionFragment: "liquiditySupply",
     data: BytesLike
   ): Result;
+  decodeFunctionResult(functionFragment: "logoURI", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "lpReceiver", data: BytesLike): Result;
-  decodeFunctionResult(
-    functionFragment: "metadataURI",
-    data: BytesLike
-  ): Result;
   decodeFunctionResult(functionFragment: "owner", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "priceSlope", data: BytesLike): Result;
   decodeFunctionResult(
@@ -286,6 +296,8 @@ export interface LaunchCampaignInterface extends Interface {
     functionFragment: "transferOwnership",
     data: BytesLike
   ): Result;
+  decodeFunctionResult(functionFragment: "website", data: BytesLike): Result;
+  decodeFunctionResult(functionFragment: "xAccount", data: BytesLike): Result;
 }
 
 export namespace CampaignFinalizedEvent {
@@ -422,6 +434,8 @@ export interface LaunchCampaign extends BaseContract {
 
   curveSupply: TypedContractMethod<[], [bigint], "view">;
 
+  extraLink: TypedContractMethod<[], [string], "view">;
+
   factory: TypedContractMethod<[], [string], "view">;
 
   feeRecipient: TypedContractMethod<[], [string], "view">;
@@ -442,9 +456,9 @@ export interface LaunchCampaign extends BaseContract {
 
   liquiditySupply: TypedContractMethod<[], [bigint], "view">;
 
-  lpReceiver: TypedContractMethod<[], [string], "view">;
+  logoURI: TypedContractMethod<[], [string], "view">;
 
-  metadataURI: TypedContractMethod<[], [string], "view">;
+  lpReceiver: TypedContractMethod<[], [string], "view">;
 
   owner: TypedContractMethod<[], [string], "view">;
 
@@ -486,6 +500,10 @@ export interface LaunchCampaign extends BaseContract {
     "nonpayable"
   >;
 
+  website: TypedContractMethod<[], [string], "view">;
+
+  xAccount: TypedContractMethod<[], [string], "view">;
+
   getFunction<T extends ContractMethod = ContractMethod>(
     key: string | FunctionFragment
   ): T;
@@ -509,6 +527,9 @@ export interface LaunchCampaign extends BaseContract {
   getFunction(
     nameOrSignature: "curveSupply"
   ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "extraLink"
+  ): TypedContractMethod<[], [string], "view">;
   getFunction(
     nameOrSignature: "factory"
   ): TypedContractMethod<[], [string], "view">;
@@ -538,10 +559,10 @@ export interface LaunchCampaign extends BaseContract {
     nameOrSignature: "liquiditySupply"
   ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
-    nameOrSignature: "lpReceiver"
+    nameOrSignature: "logoURI"
   ): TypedContractMethod<[], [string], "view">;
   getFunction(
-    nameOrSignature: "metadataURI"
+    nameOrSignature: "lpReceiver"
   ): TypedContractMethod<[], [string], "view">;
   getFunction(
     nameOrSignature: "owner"
@@ -583,6 +604,12 @@ export interface LaunchCampaign extends BaseContract {
   getFunction(
     nameOrSignature: "transferOwnership"
   ): TypedContractMethod<[newOwner: AddressLike], [void], "nonpayable">;
+  getFunction(
+    nameOrSignature: "website"
+  ): TypedContractMethod<[], [string], "view">;
+  getFunction(
+    nameOrSignature: "xAccount"
+  ): TypedContractMethod<[], [string], "view">;
 
   getEvent(
     key: "CampaignFinalized"

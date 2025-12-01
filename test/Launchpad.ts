@@ -19,7 +19,10 @@ describe("Launchpad clone", function () {
     const request = {
       name: "Test Token",
       symbol: "TEST",
-      metadataURI: "ipfs://hash",
+      logoURI: "ipfs://logo-hash",
+      xAccount: "https://x.com/test",
+      website: "https://example.com",
+      extraLink: "https://t.me/test",
       basePrice: ethers.parseEther("0.0000005"),
       priceSlope: ethers.parseEther("0.0000000001"),
       graduationTarget: ethers.parseEther("0.1"),

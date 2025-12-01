@@ -14,7 +14,10 @@ type CampaignInfo = {
   creator: string;
   name: string;
   symbol: string;
-  metadataURI: string;
+  logoURI: string;
+  xAccount: string;
+  website: string;
+  extraLink: string;
   createdAt: number;
 };
 
@@ -81,7 +84,7 @@ const formatNumber = (value?: bigint, precision = 4) => {
 
 const shortAddress = (address?: string) => {
   if (!address) return "-";
-  return `${address.slice(0, 6)}…${address.slice(-4)}`;
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
 };
 
 const toBps = (input: string) => {
@@ -120,12 +123,18 @@ function App() {
   const [createForm, setCreateForm] = useState({
     name: "",
     symbol: "",
-    metadataURI: "",
+    logoURI: "",
+    xAccount: "",
+    website: "",
+    extraLink: "",
     basePrice: "",
     priceSlope: "",
     graduationTarget: "",
     lpReceiver: "",
   });
+  const [logoPreview, setLogoPreview] = useState("");
+  const [logoError, setLogoError] = useState("");
+  const [logoValid, setLogoValid] = useState(false);
 
   const [buyInput, setBuyInput] = useState("");
   const [buyQuote, setBuyQuote] = useState<bigint | null>(null);
@@ -184,7 +193,10 @@ function App() {
           creator: raw.creator,
           name: raw.name,
           symbol: raw.symbol,
-          metadataURI: raw.metadataURI,
+          logoURI: raw.logoURI,
+          xAccount: raw.xAccount,
+          website: raw.website,
+          extraLink: raw.extraLink,
           createdAt: Number(raw.createdAt),
         })
       );
@@ -262,6 +274,14 @@ function App() {
   }, [loadMetrics]);
 
   useEffect(() => {
+    return () => {
+      if (logoPreview) {
+        URL.revokeObjectURL(logoPreview);
+      }
+    };
+  }, [logoPreview]);
+
+  useEffect(() => {
     if (!campaignContract || !buyInput) {
       setBuyQuote(null);
       return;
@@ -297,6 +317,39 @@ function App() {
     setCreateForm((prev) => ({ ...prev, [field]: value }));
   };
 
+  const handleLogoUpload = (file?: File | null) => {
+    setLogoError("");
+    setLogoValid(false);
+    if (!file) {
+      if (logoPreview) {
+        URL.revokeObjectURL(logoPreview);
+      }
+      setLogoPreview("");
+      return;
+    }
+    const previewUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      if (img.width !== 500 || img.height !== 500) {
+        setLogoError("Logo must be exactly 500px by 500px.");
+        URL.revokeObjectURL(previewUrl);
+        setLogoPreview("");
+        return;
+      }
+      if (logoPreview) {
+        URL.revokeObjectURL(logoPreview);
+      }
+      setLogoPreview(previewUrl);
+      setLogoValid(true);
+    };
+    img.onerror = () => {
+      setLogoError("Unable to read the logo. Use a 500x500 PNG or JPG.");
+      URL.revokeObjectURL(previewUrl);
+      setLogoPreview("");
+    };
+    img.src = previewUrl;
+  };
+
   const describeError = (err: unknown) => {
     if (err && typeof err === "object") {
       const asAny = err as any;
@@ -316,14 +369,22 @@ function App() {
       setError("Connect your wallet to deploy a campaign.");
       return;
     }
+    const logoUri = createForm.logoURI.trim();
+    if (!logoValid || !logoUri) {
+      setError("Upload a 500x500 logo and provide the logo URL to store on-chain.");
+      return;
+    }
     try {
-      setStatus("Sending transaction…");
+      setStatus("Sending transaction...");
       setError("");
       const writer = factoryContract.connect(wallet.signer) as FactoryContract;
       const tx = await writer.createCampaign({
         name: createForm.name,
         symbol: createForm.symbol,
-        metadataURI: createForm.metadataURI,
+        logoURI: logoUri,
+        xAccount: createForm.xAccount.trim(),
+        website: createForm.website.trim(),
+        extraLink: createForm.extraLink.trim(),
         basePrice: parseWei(createForm.basePrice) ?? 0n,
         priceSlope: parseWei(createForm.priceSlope) ?? 0n,
         graduationTarget: parseWei(createForm.graduationTarget) ?? 0n,
@@ -334,12 +395,21 @@ function App() {
       setCreateForm({
         name: "",
         symbol: "",
-        metadataURI: "",
+        logoURI: "",
+        xAccount: "",
+        website: "",
+        extraLink: "",
         basePrice: "",
         priceSlope: "",
         graduationTarget: "",
         lpReceiver: "",
       });
+      if (logoPreview) {
+        URL.revokeObjectURL(logoPreview);
+      }
+      setLogoPreview("");
+      setLogoValid(false);
+      setLogoError("");
       await loadCampaigns();
     } catch (err) {
       console.error(err);
@@ -361,7 +431,7 @@ function App() {
       return;
     }
     try {
-      setStatus("Submitting buy order…");
+      setStatus("Submitting buy order...");
       setError("");
       const slippageBps = toBps(buySlippage);
       const premium = (buyQuote * BigInt(slippageBps)) / 10000n;
@@ -392,7 +462,7 @@ function App() {
       return;
     }
     try {
-      setStatus("Submitting sell order…");
+      setStatus("Submitting sell order...");
       setError("");
       const signer = wallet.signer;
       const tokenContract = new Contract(selected.token, TOKEN_ABI, signer);
@@ -428,7 +498,7 @@ function App() {
       return;
     }
     try {
-      setStatus("Finalizing campaign…");
+      setStatus("Finalizing campaign...");
       setError("");
       const writer = campaignContract.connect(wallet.signer) as CampaignContract;
       const tx = await writer.finalize(minTokens ?? 0n, minBnb ?? 0n);
@@ -446,14 +516,14 @@ function App() {
   };
 
   const currentCampaignStatus = selected
-    ? `${selected.name} · ${selected.symbol}`
+    ? `${selected.name} - ${selected.symbol}`
     : "Select a campaign";
 
   return (
     <div className="app">
       <header className="header">
         <div>
-          <h1>LaunchIt · Pump.fun for BSC</h1>
+          <h1>LaunchIt - Pump.fun for BSC</h1>
           <p>Deploy bonding-curve launches that auto-graduate to PancakeSwap.</p>
         </div>
         <div className="wallet-panel">
@@ -469,7 +539,7 @@ function App() {
             onClick={wallet.connect}
             disabled={wallet.connecting || wallet.isConnected}
           >
-            {wallet.isConnected ? "Connected" : wallet.connecting ? "Connecting…" : "Connect Wallet"}
+            {wallet.isConnected ? "Connected" : wallet.connecting ? "Connecting..." : "Connect Wallet"}
           </button>
         </div>
       </header>
@@ -478,7 +548,7 @@ function App() {
       {error && (
         <div className="banner danger">
           {error}
-          <button onClick={() => setError("")}>×</button>
+          <button onClick={() => setError("")}>x</button>
         </div>
       )}
 
@@ -520,13 +590,54 @@ function App() {
             required
             placeholder="MEME"
           />
-          <label>Metadata URI</label>
+          <label>Logo Upload (500x500 required)</label>
           <input
-            value={createForm.metadataURI}
-            onChange={(event) =>
-              handleCreateChange("metadataURI", event.target.value)
-            }
-            placeholder="ipfs://..."
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            onChange={(event) => handleLogoUpload(event.target.files?.[0])}
+            required
+          />
+          {logoPreview && (
+            <div className="logo-preview">
+              <img src={logoPreview} alt="Logo preview" />
+              <span>500x500 confirmed</span>
+            </div>
+          )}
+          {logoError && <p className="hint error">{logoError}</p>}
+          <label>Logo URL (stored on-chain)</label>
+          <input
+            value={createForm.logoURI}
+            onChange={(event) => handleCreateChange("logoURI", event.target.value)}
+            required
+            placeholder="https://..."
+          />
+          <div className="grid two">
+            <div>
+              <label>X / Twitter (optional)</label>
+              <input
+                value={createForm.xAccount}
+                onChange={(event) =>
+                  handleCreateChange("xAccount", event.target.value)
+                }
+                placeholder="https://x.com/username"
+              />
+            </div>
+            <div>
+              <label>Website (optional)</label>
+              <input
+                value={createForm.website}
+                onChange={(event) =>
+                  handleCreateChange("website", event.target.value)
+                }
+                placeholder="https://example.com"
+              />
+            </div>
+          </div>
+          <label>Third Link (optional)</label>
+          <input
+            value={createForm.extraLink}
+            onChange={(event) => handleCreateChange("extraLink", event.target.value)}
+            placeholder="Discord, Telegram, or other link"
           />
           <div className="grid two">
             <div>
@@ -572,7 +683,10 @@ function App() {
               />
             </div>
           </div>
-          <button type="submit" disabled={!wallet.isConnected}>
+          <button
+            type="submit"
+            disabled={!wallet.isConnected || !logoValid || !createForm.logoURI.trim()}
+          >
             Deploy Campaign
           </button>
         </form>
@@ -592,7 +706,7 @@ function App() {
                 onClick={() => setSelected(campaign)}
               >
                 <strong>
-                  {campaign.name} · {campaign.symbol}
+                  {campaign.name} - {campaign.symbol}
                 </strong>
                 <span>{shortAddress(campaign.campaign)}</span>
                 <span>Creator: {shortAddress(campaign.creator)}</span>
@@ -605,14 +719,55 @@ function App() {
       <section className="card">
         <div className="card-header">
           <h2>{currentCampaignStatus}</h2>
-          {selected?.metadataURI && (
-            <a href={selected.metadataURI} target="_blank" rel="noreferrer">
-              view metadata
-            </a>
-          )}
         </div>
         {selected && metrics ? (
           <>
+            <div className="metadata-row">
+              {selected.logoURI && (
+                <div className="logo-card">
+                  <img
+                    src={selected.logoURI}
+                    alt={`${selected.name} logo`}
+                    onError={(event) => {
+                      event.currentTarget.style.visibility = "hidden";
+                    }}
+                  />
+                  <span>Logo</span>
+                </div>
+              )}
+              <div className="link-stack">
+                <div className="link-row">
+                  <span>Logo Link</span>
+                  <a href={selected.logoURI} target="_blank" rel="noreferrer">
+                    Open
+                  </a>
+                </div>
+                {selected.xAccount && (
+                  <div className="link-row">
+                    <span>X</span>
+                    <a href={selected.xAccount} target="_blank" rel="noreferrer">
+                      {selected.xAccount}
+                    </a>
+                  </div>
+                )}
+                {selected.website && (
+                  <div className="link-row">
+                    <span>Website</span>
+                    <a href={selected.website} target="_blank" rel="noreferrer">
+                      {selected.website}
+                    </a>
+                  </div>
+                )}
+                {selected.extraLink && (
+                  <div className="link-row">
+                    <span>Extra</span>
+                    <a href={selected.extraLink} target="_blank" rel="noreferrer">
+                      {selected.extraLink}
+                    </a>
+                  </div>
+                )}
+              </div>
+            </div>
             <div className="stats-grid">
               <div>
                 <span className="label">Status</span>

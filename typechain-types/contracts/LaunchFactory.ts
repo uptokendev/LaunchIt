@@ -55,7 +55,10 @@ export declare namespace LaunchFactory {
   export type CampaignRequestStruct = {
     name: string;
     symbol: string;
-    metadataURI: string;
+    logoURI: string;
+    xAccount: string;
+    website: string;
+    extraLink: string;
     basePrice: BigNumberish;
     priceSlope: BigNumberish;
     graduationTarget: BigNumberish;
@@ -65,7 +68,10 @@ export declare namespace LaunchFactory {
   export type CampaignRequestStructOutput = [
     name: string,
     symbol: string,
-    metadataURI: string,
+    logoURI: string,
+    xAccount: string,
+    website: string,
+    extraLink: string,
     basePrice: bigint,
     priceSlope: bigint,
     graduationTarget: bigint,
@@ -73,7 +79,10 @@ export declare namespace LaunchFactory {
   ] & {
     name: string;
     symbol: string;
-    metadataURI: string;
+    logoURI: string;
+    xAccount: string;
+    website: string;
+    extraLink: string;
     basePrice: bigint;
     priceSlope: bigint;
     graduationTarget: bigint;
@@ -86,7 +95,10 @@ export declare namespace LaunchFactory {
     creator: AddressLike;
     name: string;
     symbol: string;
-    metadataURI: string;
+    logoURI: string;
+    xAccount: string;
+    website: string;
+    extraLink: string;
     createdAt: BigNumberish;
   };
 
@@ -96,7 +108,10 @@ export declare namespace LaunchFactory {
     creator: string,
     name: string,
     symbol: string,
-    metadataURI: string,
+    logoURI: string,
+    xAccount: string,
+    website: string,
+    extraLink: string,
     createdAt: bigint
   ] & {
     campaign: string;
@@ -104,7 +119,10 @@ export declare namespace LaunchFactory {
     creator: string;
     name: string;
     symbol: string;
-    metadataURI: string;
+    logoURI: string;
+    xAccount: string;
+    website: string;
+    extraLink: string;
     createdAt: bigint;
   };
 }

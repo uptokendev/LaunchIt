@@ -17,7 +17,10 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     struct InitParams {
         string name;
         string symbol;
-        string metadataURI;
+        string logoURI;
+        string xAccount;
+        string website;
+        string extraLink;
         uint256 totalSupply;
         uint256 curveBps;
         uint256 liquidityTokenBps;
@@ -43,7 +46,10 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     address public immutable feeRecipient;
     address public immutable lpReceiver;
 
-    string public metadataURI;
+    string public logoURI;
+    string public xAccount;
+    string public website;
+    string public extraLink;
 
     uint256 public immutable basePrice;
     uint256 public immutable priceSlope;
@@ -83,8 +89,12 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         require(params.creator != address(0), "creator zero");
         require(params.liquidityBps <= MAX_BPS, "liquidity bps");
         require(params.protocolFeeBps <= MAX_BPS, "protocol bps");
+        require(bytes(params.logoURI).length > 0, "logo uri");
 
-        metadataURI = params.metadataURI;
+        logoURI = params.logoURI;
+        xAccount = params.xAccount;
+        website = params.website;
+        extraLink = params.extraLink;
         basePrice = params.basePrice;
         priceSlope = params.priceSlope;
         graduationTarget = params.graduationTarget;

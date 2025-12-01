@@ -299,8 +299,8 @@
       ]
     },
     "C:\\Users\\aglamadrid19\\Documents\\Projects\\LaunchIt\\contracts\\LaunchCampaign.sol": {
-      "lastModificationDate": 1763891978133,
-      "contentHash": "b8ab629193ce4e6df4557b10de25f456",
+      "lastModificationDate": 1763979700019,
+      "contentHash": "d9bb507e561c2eb74e06ddaaaba18a66",
       "sourceName": "contracts/LaunchCampaign.sol",
       "solcConfig": {
         "version": "0.8.24",
@@ -720,8 +720,8 @@
       ]
     },
     "C:\\Users\\aglamadrid19\\Documents\\Projects\\LaunchIt\\contracts\\LaunchFactory.sol": {
-      "lastModificationDate": 1763891978157,
-      "contentHash": "878193cff46ad87f9784c9b08a3bb31a",
+      "lastModificationDate": 1763979706867,
+      "contentHash": "1178c1c9c33d349b3e5e38719e4103bc",
       "sourceName": "contracts/LaunchFactory.sol",
       "solcConfig": {
         "version": "0.8.24",
