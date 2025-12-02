@@ -40,7 +40,27 @@
   flex-direction: column;
   gap: 0.2rem;
 }
+.wallet-menu {
+  position: relative;
+}
+.wallet-dropdown {
+  position: absolute;
+  right: 0;
+  top: 110%;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.75rem;
+  background: rgba(15, 23, 42, 0.95);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  z-index: 20;
+}
 
+.wallet-dropdown button {
+  width: 100%;
+  justify-content: flex-start;
+}
+.wallet-menu:hover .wallet-dropdown {
+  display: block;
+}
 .label {
   font-size: 0.8rem;
   text-transform: uppercase;

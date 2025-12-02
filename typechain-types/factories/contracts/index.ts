@@ -4,5 +4,9 @@
 export * as interfaces from "./interfaces";
 export * as mocks from "./mocks";
 export * as token from "./token";
+export { BondingCurveSale__factory } from "./BondingCurveSale__factory";
+export { Factory__factory } from "./Factory__factory";
 export { LaunchCampaign__factory } from "./LaunchCampaign__factory";
 export { LaunchFactory__factory } from "./LaunchFactory__factory";
+export { LpTimelock__factory } from "./LpTimelock__factory";
+export { TokenTemplate__factory } from "./TokenTemplate__factory";

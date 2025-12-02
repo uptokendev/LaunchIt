@@ -112,6 +112,7 @@ const parseWei = (value: string) => {
 };
 
 function App() {
+  const [walletMenuOpen, setWalletMenuOpen] = useState(false);
   const wallet = useWallet();
   const [factoryAddress, setFactoryAddress] = useState(DEFAULT_FACTORY);
   const [campaigns, setCampaigns] = useState<CampaignInfo[]>([]);
@@ -527,21 +528,46 @@ function App() {
           <p>Deploy bonding-curve launches that auto-graduate to PancakeSwap.</p>
         </div>
         <div className="wallet-panel">
-          <div>
-            <span className="label">Network</span>
-            <strong>{wallet.chainId ?? "Unknown"}</strong>
-          </div>
-          <div>
-            <span className="label">Account</span>
-            <strong>{wallet.account ? shortAddress(wallet.account) : "Not Connected"}</strong>
-          </div>
+  <div>
+    <span className="label">Network</span>
+    <strong>{wallet.chainId ?? "Unknown"}</strong>
+  </div>
+  <div>
+    <span className="label">Account</span>
+    <strong>{wallet.account ? shortAddress(wallet.account) : "Not Connected"}</strong>
+  </div>
+
+  {!wallet.isConnected ? (
+    <button
+      onClick={wallet.connect}
+      disabled={wallet.connecting}
+    >
+      {wallet.connecting ? "Connecting..." : "Connect Wallet"}
+    </button>
+  ) : (
+    <div className="wallet-menu">
+      <button
+        type="button"
+        onClick={() => setWalletMenuOpen((open) => !open)}
+      >
+        Connected ▾
+      </button>
+      {walletMenuOpen && (
+        <div className="wallet-dropdown">
           <button
-            onClick={wallet.connect}
-            disabled={wallet.connecting || wallet.isConnected}
+            type="button"
+            onClick={() => {
+              wallet.disconnect();
+              setWalletMenuOpen(false);
+            }}
           >
-            {wallet.isConnected ? "Connected" : wallet.connecting ? "Connecting..." : "Connect Wallet"}
+            Disconnect
           </button>
         </div>
+      )}
+    </div>
+  )}
+</div>
       </header>
 
       {status && <div className="banner success">{status}</div>}

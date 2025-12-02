@@ -8,6 +8,7 @@ type WalletHook = {
   chainId?: number;
   connecting: boolean;
   connect: () => Promise<void>;
+  disconnect: () => void;
   isConnected: boolean;
 };
 
@@ -19,49 +20,61 @@ export function useWallet(): WalletHook {
   const [connecting, setConnecting] = useState(false);
 
   useEffect(() => {
-    if (!window.ethereum) {
-      return;
+  const anyWindow = window as any;
+  const eth = anyWindow.ethereum;
+  if (!eth) {
+    return;
+  }
+
+  // Prefer MetaMask Flask > MetaMask > first provider
+  let selectedProvider = eth;
+
+  if (Array.isArray(eth.providers) && eth.providers.length > 0) {
+    selectedProvider =
+      eth.providers.find((p: any) => p.isMetaMask && p.isFlask) ??
+      eth.providers.find((p: any) => p.isMetaMask) ??
+      eth.providers[0];
+  }
+
+  const browserProvider = new BrowserProvider(selectedProvider);
+  setProvider(browserProvider);
+
+  const handleAccountsChanged = (accounts: string[]) => {
+    const primary = accounts[0] ?? "";
+    setAccount(primary);
+    if (primary) {
+      browserProvider.getSigner().then(setSigner).catch(() => setSigner(null));
+    } else {
+      setSigner(null);
     }
+  };
 
-    const browserProvider = new BrowserProvider(window.ethereum);
-    setProvider(browserProvider);
+  const handleChainChanged = (hexChainId: string) => {
+    try {
+      setChainId(Number(BigInt(hexChainId)));
+    } catch {
+      setChainId(undefined);
+    }
+  };
 
-    const handleAccountsChanged = (accounts: string[]) => {
-      const primary = accounts[0] ?? "";
-      setAccount(primary);
-      if (primary) {
-        browserProvider.getSigner().then(setSigner).catch(() => setSigner(null));
-      } else {
-        setSigner(null);
-      }
-    };
+  browserProvider
+    .send("eth_accounts", [])
+    .then(handleAccountsChanged)
+    .catch(() => undefined);
 
-    const handleChainChanged = (hexChainId: string) => {
-      try {
-        setChainId(Number(BigInt(hexChainId)));
-      } catch {
-        setChainId(undefined);
-      }
-    };
+  browserProvider
+    .getNetwork()
+    .then((network) => setChainId(Number(network.chainId)))
+    .catch(() => undefined);
 
-    browserProvider
-      .send("eth_accounts", [])
-      .then(handleAccountsChanged)
-      .catch(() => undefined);
+  eth?.on?.("accountsChanged", handleAccountsChanged);
+  eth?.on?.("chainChanged", handleChainChanged);
 
-    browserProvider
-      .getNetwork()
-      .then((network) => setChainId(Number(network.chainId)))
-      .catch(() => undefined);
-
-    window.ethereum?.on?.("accountsChanged", handleAccountsChanged);
-    window.ethereum?.on?.("chainChanged", handleChainChanged);
-
-    return () => {
-      window.ethereum?.removeListener?.("accountsChanged", handleAccountsChanged);
-      window.ethereum?.removeListener?.("chainChanged", handleChainChanged);
-    };
-  }, []);
+  return () => {
+    eth?.removeListener?.("accountsChanged", handleAccountsChanged);
+    eth?.removeListener?.("chainChanged", handleChainChanged);
+  };
+}, []);
 
   const connect = useCallback(async () => {
     if (!provider) {
@@ -83,6 +96,12 @@ export function useWallet(): WalletHook {
     }
   }, [provider]);
 
+  const disconnect = useCallback(() => {
+    setAccount("");
+    setSigner(null);
+    setChainId(undefined);
+  }, []);
+
   return useMemo(
     () => ({
       provider,
@@ -91,8 +110,9 @@ export function useWallet(): WalletHook {
       chainId,
       connecting,
       connect,
+      disconnect,                   // ⬅️ include it here
       isConnected: Boolean(account),
     }),
-    [provider, signer, account, chainId, connecting, connect]
+    [provider, signer, account, chainId, connecting, connect, disconnect]
   );
 }
