@@ -299,8 +299,8 @@
       ]
     },
     "E:\\Network\\Zakelijk\\LaunchIt\\contracts\\LaunchCampaign.sol": {
-      "lastModificationDate": 1764624204896,
-      "contentHash": "6bbe456cbf1953a9edfbda0145b8ba3a",
+      "lastModificationDate": 1765406426664,
+      "contentHash": "7da71e040fb19eeea48fe92a24350f60",
       "sourceName": "contracts/LaunchCampaign.sol",
       "solcConfig": {
         "version": "0.8.24",
@@ -343,8 +343,8 @@
       ]
     },
     "E:\\Network\\Zakelijk\\LaunchIt\\contracts\\token\\LaunchToken.sol": {
-      "lastModificationDate": 1764624204897,
-      "contentHash": "92584b75c89a6b3943002035a93e57c4",
+      "lastModificationDate": 1765406340819,
+      "contentHash": "6b036cd21f009c361d487200cebbde0f",
       "sourceName": "contracts/token/LaunchToken.sol",
       "solcConfig": {
         "version": "0.8.24",

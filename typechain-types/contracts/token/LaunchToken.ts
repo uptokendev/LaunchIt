@@ -32,12 +32,14 @@ export interface LaunchTokenInterface extends Interface {
       | "burn"
       | "cap"
       | "decimals"
+      | "enableTrading"
       | "mint"
       | "name"
       | "owner"
       | "renounceOwnership"
       | "symbol"
       | "totalSupply"
+      | "tradingEnabled"
       | "transfer"
       | "transferFrom"
       | "transferOwnership"
@@ -66,6 +68,10 @@ export interface LaunchTokenInterface extends Interface {
   encodeFunctionData(functionFragment: "cap", values?: undefined): string;
   encodeFunctionData(functionFragment: "decimals", values?: undefined): string;
   encodeFunctionData(
+    functionFragment: "enableTrading",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
     functionFragment: "mint",
     values: [AddressLike, BigNumberish]
   ): string;
@@ -78,6 +84,10 @@ export interface LaunchTokenInterface extends Interface {
   encodeFunctionData(functionFragment: "symbol", values?: undefined): string;
   encodeFunctionData(
     functionFragment: "totalSupply",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "tradingEnabled",
     values?: undefined
   ): string;
   encodeFunctionData(
@@ -99,6 +109,10 @@ export interface LaunchTokenInterface extends Interface {
   decodeFunctionResult(functionFragment: "burn", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "cap", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "decimals", data: BytesLike): Result;
+  decodeFunctionResult(
+    functionFragment: "enableTrading",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(functionFragment: "mint", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "name", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "owner", data: BytesLike): Result;
@@ -109,6 +123,10 @@ export interface LaunchTokenInterface extends Interface {
   decodeFunctionResult(functionFragment: "symbol", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "totalSupply",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "tradingEnabled",
     data: BytesLike
   ): Result;
   decodeFunctionResult(functionFragment: "transfer", data: BytesLike): Result;
@@ -238,6 +256,8 @@ export interface LaunchToken extends BaseContract {
 
   decimals: TypedContractMethod<[], [bigint], "view">;
 
+  enableTrading: TypedContractMethod<[], [void], "nonpayable">;
+
   mint: TypedContractMethod<
     [to: AddressLike, amount: BigNumberish],
     [void],
@@ -253,6 +273,8 @@ export interface LaunchToken extends BaseContract {
   symbol: TypedContractMethod<[], [string], "view">;
 
   totalSupply: TypedContractMethod<[], [bigint], "view">;
+
+  tradingEnabled: TypedContractMethod<[], [boolean], "view">;
 
   transfer: TypedContractMethod<
     [to: AddressLike, value: BigNumberish],
@@ -307,6 +329,9 @@ export interface LaunchToken extends BaseContract {
     nameOrSignature: "decimals"
   ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
+    nameOrSignature: "enableTrading"
+  ): TypedContractMethod<[], [void], "nonpayable">;
+  getFunction(
     nameOrSignature: "mint"
   ): TypedContractMethod<
     [to: AddressLike, amount: BigNumberish],
@@ -328,6 +353,9 @@ export interface LaunchToken extends BaseContract {
   getFunction(
     nameOrSignature: "totalSupply"
   ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "tradingEnabled"
+  ): TypedContractMethod<[], [boolean], "view">;
   getFunction(
     nameOrSignature: "transfer"
   ): TypedContractMethod<

@@ -62,14 +62,6 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.ReentrancyGuard__factory>;
     getContractFactory(
-      name: "BondingCurveSale",
-      signerOrOptions?: ethers.Signer | FactoryOptions
-    ): Promise<Contracts.BondingCurveSale__factory>;
-    getContractFactory(
-      name: "Factory",
-      signerOrOptions?: ethers.Signer | FactoryOptions
-    ): Promise<Contracts.Factory__factory>;
-    getContractFactory(
       name: "IPancakeRouter02",
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.IPancakeRouter02__factory>;
@@ -82,10 +74,6 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.LaunchFactory__factory>;
     getContractFactory(
-      name: "LpTimelock",
-      signerOrOptions?: ethers.Signer | FactoryOptions
-    ): Promise<Contracts.LpTimelock__factory>;
-    getContractFactory(
       name: "MockRouter",
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.MockRouter__factory>;
@@ -93,10 +81,6 @@ declare module "hardhat/types/runtime" {
       name: "LaunchToken",
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.LaunchToken__factory>;
-    getContractFactory(
-      name: "TokenTemplate",
-      signerOrOptions?: ethers.Signer | FactoryOptions
-    ): Promise<Contracts.TokenTemplate__factory>;
 
     getContractAt(
       name: "Ownable",
@@ -159,16 +143,6 @@ declare module "hardhat/types/runtime" {
       signer?: ethers.Signer
     ): Promise<Contracts.ReentrancyGuard>;
     getContractAt(
-      name: "BondingCurveSale",
-      address: string | ethers.Addressable,
-      signer?: ethers.Signer
-    ): Promise<Contracts.BondingCurveSale>;
-    getContractAt(
-      name: "Factory",
-      address: string | ethers.Addressable,
-      signer?: ethers.Signer
-    ): Promise<Contracts.Factory>;
-    getContractAt(
       name: "IPancakeRouter02",
       address: string | ethers.Addressable,
       signer?: ethers.Signer
@@ -184,11 +158,6 @@ declare module "hardhat/types/runtime" {
       signer?: ethers.Signer
     ): Promise<Contracts.LaunchFactory>;
     getContractAt(
-      name: "LpTimelock",
-      address: string | ethers.Addressable,
-      signer?: ethers.Signer
-    ): Promise<Contracts.LpTimelock>;
-    getContractAt(
       name: "MockRouter",
       address: string | ethers.Addressable,
       signer?: ethers.Signer
@@ -198,11 +167,6 @@ declare module "hardhat/types/runtime" {
       address: string | ethers.Addressable,
       signer?: ethers.Signer
     ): Promise<Contracts.LaunchToken>;
-    getContractAt(
-      name: "TokenTemplate",
-      address: string | ethers.Addressable,
-      signer?: ethers.Signer
-    ): Promise<Contracts.TokenTemplate>;
 
     deployContract(
       name: "Ownable",
@@ -253,14 +217,6 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.ReentrancyGuard>;
     deployContract(
-      name: "BondingCurveSale",
-      signerOrOptions?: ethers.Signer | DeployContractOptions
-    ): Promise<Contracts.BondingCurveSale>;
-    deployContract(
-      name: "Factory",
-      signerOrOptions?: ethers.Signer | DeployContractOptions
-    ): Promise<Contracts.Factory>;
-    deployContract(
       name: "IPancakeRouter02",
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.IPancakeRouter02>;
@@ -273,10 +229,6 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.LaunchFactory>;
     deployContract(
-      name: "LpTimelock",
-      signerOrOptions?: ethers.Signer | DeployContractOptions
-    ): Promise<Contracts.LpTimelock>;
-    deployContract(
       name: "MockRouter",
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.MockRouter>;
@@ -284,10 +236,6 @@ declare module "hardhat/types/runtime" {
       name: "LaunchToken",
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.LaunchToken>;
-    deployContract(
-      name: "TokenTemplate",
-      signerOrOptions?: ethers.Signer | DeployContractOptions
-    ): Promise<Contracts.TokenTemplate>;
 
     deployContract(
       name: "Ownable",
@@ -350,16 +298,6 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.ReentrancyGuard>;
     deployContract(
-      name: "BondingCurveSale",
-      args: any[],
-      signerOrOptions?: ethers.Signer | DeployContractOptions
-    ): Promise<Contracts.BondingCurveSale>;
-    deployContract(
-      name: "Factory",
-      args: any[],
-      signerOrOptions?: ethers.Signer | DeployContractOptions
-    ): Promise<Contracts.Factory>;
-    deployContract(
       name: "IPancakeRouter02",
       args: any[],
       signerOrOptions?: ethers.Signer | DeployContractOptions
@@ -375,11 +313,6 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.LaunchFactory>;
     deployContract(
-      name: "LpTimelock",
-      args: any[],
-      signerOrOptions?: ethers.Signer | DeployContractOptions
-    ): Promise<Contracts.LpTimelock>;
-    deployContract(
       name: "MockRouter",
       args: any[],
       signerOrOptions?: ethers.Signer | DeployContractOptions
@@ -389,11 +322,6 @@ declare module "hardhat/types/runtime" {
       args: any[],
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.LaunchToken>;
-    deployContract(
-      name: "TokenTemplate",
-      args: any[],
-      signerOrOptions?: ethers.Signer | DeployContractOptions
-    ): Promise<Contracts.TokenTemplate>;
 
     // default types
     getContractFactory(

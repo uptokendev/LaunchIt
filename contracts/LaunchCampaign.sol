@@ -184,6 +184,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
 
     function finalize(uint256 minTokens, uint256 minBnb)
         external
+        onlyOwner
         nonReentrant
         returns (uint256 usedTokens, uint256 usedBnb)
     {
@@ -234,7 +235,16 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
             _sendNative(owner(), remainingBalance);
         }
 
-        emit CampaignFinalized(msg.sender, usedTokens, usedBnb, protocolFee, remainingBalance);
+        // Enable unrestricted token transfers after liquidity is added and funds are distributed
+        token.enableTrading();
+
+        emit CampaignFinalized(
+            msg.sender,
+            usedTokens,
+            usedBnb,
+            protocolFee,
+            remainingBalance
+        );
     }
 
     /// @dev Integral of the bonding curve from 0..x gives cumulative cost in wei.
