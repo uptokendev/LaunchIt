@@ -1,2 +1,12 @@
 node_modules
 .env
+
+# Frontend build artifacts and deps
+frontend/node_modules
+frontend/dist
+frontend/.next
+frontend/.cache
+frontend/out
+frontend/.vercel
+frontend/build
+frontend/bun.lockb
