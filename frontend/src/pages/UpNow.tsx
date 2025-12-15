@@ -264,7 +264,7 @@ const UpNow = () => {
           )}
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 md:px-6 pb-4 md:pb-6 space-y-3 scrollbar-thin scrollbar-thumb-accent/50 scrollbar-track-muted">
+        <div className="px-4 md:px-6 pb-4 md:pb-6 space-y-3">
           {loading ? (
             <div className="text-center py-12">
               <p className="font-retro text-muted-foreground text-sm">

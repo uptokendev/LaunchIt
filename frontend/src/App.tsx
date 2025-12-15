@@ -46,11 +46,11 @@ const App = () => {
           }`}
         >
           <BrowserRouter>
-            <div className="h-screen overflow-hidden bg-background flex flex-col">
+            <div className="min-h-screen bg-background flex flex-col">
               <GridBackground />
               <Sidebar mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} />
               <TopBar mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} />
-              <main className="flex-1 overflow-hidden pt-28 lg:pt-28 pl-0 lg:pl-72 pr-4 md:pr-6 lg:pr-8 pb-4 md:pb-6 lg:pb-8">
+              <main className="flex-1 overflow-auto pt-28 lg:pt-28 pl-0 lg:pl-72 pr-4 md:pr-6 lg:pr-8 pb-4 md:pb-6 lg:pb-8">
                 <Routes>
                   <Route path="/" element={<Showcase />} />
                   <Route path="/create" element={<Create />} />

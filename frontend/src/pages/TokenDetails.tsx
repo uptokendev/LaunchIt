@@ -302,7 +302,7 @@ const TokenDetails = () => {
   }
 
   return (
-    <div className="h-full w-full overflow-hidden flex flex-col px-3 md:px-6 pt-3 md:pt-6 gap-3 md:gap-4">
+    <div className="w-full flex flex-col px-3 md:px-6 pt-3 md:pt-6 gap-3 md:gap-4">
       {/* Main Content - Single Row */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-3 md:gap-4 flex-1 min-h-0">
         {/* Left Column - Header, Chart & Transactions (3/4 width) */}
@@ -560,27 +560,29 @@ const TokenDetails = () => {
           {/* Chart */}
           <Card
   className="bg-card/30 backdrop-blur-md rounded-2xl border border-border p-0 md:p-0 overflow-hidden"
-  style={{ flex: isMobile ? "3" : "2" }}
+  style={{ flex: isMobile ? "3" : "2", minHeight: isMobile ? undefined : '480px' }}
 >
   {hasDexChart ? (
     // 🔹 Post-LP: Dexscreener chart-only view
     <iframe
       src={chartUrl!}
       title={`${tokenData.ticker} chart`}
-      className="w-full h-[260px] md:h-full rounded-2xl border-0"
+      className="w-full h-[480px] md:h-[480px] rounded-2xl border-0"
       allow="clipboard-write; clipboard-read; encrypted-media;"
     />
   ) : (
     // 🔹 Pre-LP: internal bonding-curve chart (live or mock)
-    <CurvePriceChart
-      campaignAddress={campaign?.campaign}
-      mockMode={USE_MOCK_DATA}
-      mockEvents={
-        USE_MOCK_DATA
-          ? getMockCurveEventsForSymbol(campaign?.symbol)
-          : []
-      }
-    />
+    <div className="w-full h-[480px] md:h-[480px]">
+      <CurvePriceChart
+        campaignAddress={campaign?.campaign}
+        mockMode={USE_MOCK_DATA}
+        mockEvents={
+          USE_MOCK_DATA
+            ? getMockCurveEventsForSymbol(campaign?.symbol)
+            : []
+        }
+      />
+    </div>
   )}
 </Card>
 
