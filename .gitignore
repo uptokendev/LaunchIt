@@ -10,3 +10,9 @@ frontend/out
 frontend/.vercel
 frontend/build
 frontend/bun.lockb
+
+# Generated archives
+frontend.zip
+frontendlatest.zip
+LaunchItwithcontracts.zip
+*.zip
