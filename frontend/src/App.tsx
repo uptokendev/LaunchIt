@@ -56,7 +56,7 @@ const App = () => {
                   <Route path="/create" element={<Create />} />
                   <Route path="/up-now" element={<UpNow />} />
                   <Route path="/profile" element={<Profile />} />
-                  <Route path="/token/:id" element={<TokenDetails />} />
+                  <Route path="/token/:campaignAddress" element={<TokenDetails />} />
                   {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                   <Route path="*" element={<NotFound />} />
                 </Routes>

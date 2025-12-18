@@ -16,7 +16,7 @@ import twitterIcon from "@/assets/social/twitter.png";
 import { useLaunchpad } from "@/lib/launchpadClient";
 import type { CampaignInfo, CampaignMetrics, CampaignSummary } from "@/lib/launchpadClient";
 import { useDexScreenerChart } from "@/hooks/useDexScreenerChart";
-import { CurvePriceChart } from "@/components/token/CurvePriceChart";
+import { TokenCandlestickChart } from "@/components/token/TokenCandlestickChart";
 import { USE_MOCK_DATA } from "@/config/mockConfig";
 import { getMockCurveEventsForSymbol } from "@/constants/mockCurveTrades";
 import { getMockDexTradesForSymbol } from "@/constants/mockDexTrades";
@@ -26,6 +26,7 @@ import { useCurveTrades } from "@/hooks/useCurveTrades";
 import { Contract, ethers } from "ethers";
 import LaunchCampaignArtifact from "@/abi/LaunchCampaign.json";
 import LaunchTokenArtifact from "@/abi/LaunchToken.json";
+import { AthBar } from "@/components/token/AthBar";
 
 
 const CAMPAIGN_ABI = LaunchCampaignArtifact.abi as ethers.InterfaceAbi;
@@ -35,8 +36,8 @@ const SLIPPAGE_PCT = 5;
 const MAX_UINT256 = (1n << 256n) - 1n;
 
 const TokenDetails = () => {
-  // URL param: /token/:id  (we currently use ticker in the URL)
-  const { id } = useParams<{ id: string }>();
+  // URL param: /token/:campaignAddress  (address-based)
+const { campaignAddress } = useParams<{ campaignAddress: string }>();
 
   const { toast } = useToast();
   const [tradeAmount, setTradeAmount] = useState("0");
@@ -70,54 +71,57 @@ const TokenDetails = () => {
   const [bnbBalanceWei, setBnbBalanceWei] = useState<bigint | null>(null);
   const [tokenBalanceWei, setTokenBalanceWei] = useState<bigint | null>(null);
 
-  // Load campaign + metrics based on :id (ticker)
-  useEffect(() => {
-    const load = async () => {
-      if (!id) return;
+  // Load campaign + metrics based on :campaignAddress (preferred).
+// Backward-compatible fallback: if param is not a 0x address, treat it as symbol.
+useEffect(() => {
+  const load = async () => {
+    if (!campaignAddress) return;
 
-      try {
-        setLoading(true);
-        setError(null);
+    try {
+      setLoading(true);
+      setError(null);
 
-        const campaigns = await fetchCampaigns();
+      const campaigns = await fetchCampaigns();
 
-        if (!campaigns || campaigns.length === 0) {
-          setError("No token data");
-          setCampaign(null);
-          setMetrics(null);
-          setSummary(null);
-          return;
-        }
-
-        // We navigate with /token/${card.ticker.toLowerCase()}
-        const match = campaigns.find(
-          (c) => c.symbol.toLowerCase() === id.toLowerCase()
-        );
-
-        if (!match) {
-          setError("Token not found");
-          setCampaign(null);
-          setMetrics(null);
-          setSummary(null);
-          return;
-        }
-
-        setCampaign(match);
-
-        // Unified token stats + metrics (same source as carousel / UpNow)
-        const s = await fetchCampaignSummary(match);
-        setSummary(s);
-        setMetrics(s.metrics ?? null);
-      } catch (err) {
-        console.error(err);
-        setError("Failed to load token data");
-      } finally {
-        setLoading(false);
+      if (!campaigns || campaigns.length === 0) {
+        setError("No token data");
+        setCampaign(null);
+        setMetrics(null);
+        setSummary(null);
+        return;
       }
-    };
 
-    load();
-  }, [id, fetchCampaigns, fetchCampaignSummary]);
+      const param = campaignAddress.trim();
+      const isAddress = /^0x[a-fA-F0-9]{40}$/.test(param);
+
+      const match = isAddress
+        ? campaigns.find((c) => (c.campaign ?? "").toLowerCase() === param.toLowerCase())
+        : campaigns.find((c) => (c.symbol ?? "").toLowerCase() === param.toLowerCase());
+
+      if (!match) {
+        setError("Token not found");
+        setCampaign(null);
+        setMetrics(null);
+        setSummary(null);
+        return;
+      }
+
+      setCampaign(match);
+
+      // Unified token stats + metrics (same source as carousel / UpNow)
+      const s = await fetchCampaignSummary(match);
+      setSummary(s);
+      setMetrics(s.metrics ?? null);
+    } catch (err) {
+      console.error(err);
+      setError("Failed to load token data");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  load();
+}, [campaignAddress, fetchCampaigns, fetchCampaignSummary]);
 
   const formatPriceFromWei = (wei?: bigint | null): string => {
     if (wei == null) return "—";
@@ -287,13 +291,12 @@ const TokenDetails = () => {
 
   // Token view-model used throughout the page (mock + live)
   const tokenData = useMemo(() => {
-    const ticker = campaign?.symbol ?? (id ? id.toUpperCase() : "");
-    const name = campaign?.name ?? "Token";
+  const ticker = campaign?.symbol ?? "";
+  const name = campaign?.name ?? "Token";
+  const stats = summary?.stats;
 
-    const stats = summary?.stats;
-
-    return {
-      image: campaign?.logoURI || "/placeholder.svg",
+  return {
+    image: campaign?.logoURI || "/placeholder.svg",
       ticker,
       name,
       hasWebsite: Boolean(campaign?.website && campaign.website.length > 0),
@@ -309,7 +312,7 @@ const TokenDetails = () => {
       // Timeframe analytics (BNB volume + price change)
       metrics: timeframeTiles,
     };
-  }, [campaign, curveReserveWei, id, metrics, summary, timeframeTiles]);
+  }, [campaign, curveReserveWei, metrics, summary, timeframeTiles]);
 
   const shorten = (addr?: string): string => {
     if (!addr) return "—";
@@ -597,7 +600,7 @@ const TokenDetails = () => {
 
   const dexTokenAddress = (!isCurveTestToken && isGraduated) ? (campaign?.token ?? "") : "";
 
-  const { url: chartUrl, baseUrl: dexBaseUrl, liquidityBnb: dexLiquidityBnb } =
+  const { url: chartUrl, baseUrl: dexBaseUrl, pairAddress: dexPairAddress, liquidityBnb: dexLiquidityBnb } =
     useDexScreenerChart(dexTokenAddress);
   const hasDexChart = !!chartUrl && !isCurveTestToken && isGraduated;
   const isDexStage = !isCurveTestToken && isGraduated;
@@ -615,8 +618,6 @@ const TokenDetails = () => {
     // LIVE: best-effort liquidity (BNB-equivalent) from DexScreener.
     return formatBnb(dexLiquidityBnb ?? null);
   })();
-
-  const chartTitle = isDexStage ? "DEX chart" : "Bonding curve";
   const stagePill = isDexStage ? "Graduated" : "Bonding";
 
 
@@ -1178,54 +1179,38 @@ const TokenDetails = () => {
           >
             <div className="flex items-center justify-between px-4 py-2 border-b border-border/40 bg-card/20">
               <div className="flex items-center gap-2 min-w-0">
-                <span className="text-xs text-muted-foreground">{chartTitle}</span>
                 <span
-                  className={`text-[10px] px-2 py-0.5 rounded-full border ${
-                    isDexStage
-                      ? "bg-green-500/10 text-green-400 border-green-500/20"
-                      : "bg-accent/10 text-accent-foreground border-border/40"
-                  }`}
-                >
-                  {stagePill}
-                </span>
+  className={[
+    "inline-flex items-center justify-center",
+    "h-7 px-3 rounded-full text-[11px] font-semibold",
+    "border shadow-sm select-none",
+    "tracking-wide",
+    isDexStage
+      ? "bg-green-500/15 text-green-400 border-green-500/30 shadow-green-500/10 backdrop-blur-md ring-1 ring-white/5"
+      : "bg-yellow-500/15 text-yellow-300 border-yellow-500/30 shadow-yellow-500/10",
+  ].join(" ")}
+>
+  {stagePill}
+</span>
               </div>
 
-              {isDexStage && dexBaseUrl && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 px-2 text-[10px] text-muted-foreground hover:text-foreground"
-                  onClick={() =>
-                    window.open(dexBaseUrl, "_blank", "noopener,noreferrer")
-                  }
-                >
-                  <ExternalLink className="h-3 w-3 mr-1" />
-                  DexScreener
-                </Button>
-              )}
+              <div className="flex items-center gap-3">
+                <AthBar
+                  currentLabel={tokenData.marketCap}
+                  storageKey={`ath:${campaign?.campaign ?? campaignAddress ?? "unknown"}`}
+                  className="hidden sm:block"
+                />
+              </div>
             </div>
 
             <div className="flex-1 min-h-0">
-              {isDexStage ? (
-                chartUrl ? (
-                  <iframe
-                    src={chartUrl}
-                    title={`${tokenData.ticker} chart`}
-                    className="w-full h-full min-h-[260px] border-0"
-                    allow="clipboard-write; clipboard-read; encrypted-media;"
-                  />
-                ) : (
-                  <div className="flex items-center justify-center h-full min-h-[260px] text-xs text-muted-foreground p-4">
-                    DexScreener data is not available yet.
-                  </div>
-                )
-              ) : (
-                <CurvePriceChart
-                  campaignAddress={campaign?.campaign}
-                  mockMode={USE_MOCK_DATA}
-                  mockEvents={USE_MOCK_DATA ? getMockCurveEventsForSymbol(campaign?.symbol) : []}
-                />
-              )}
+              <TokenCandlestickChart
+                stage={isDexStage ? "dex" : "curve"}
+                symbol={campaign?.symbol}
+                campaignAddress={campaign?.campaign}
+                tokenAddress={campaign?.token}
+                dexPairAddress={dexPairAddress}
+              />
             </div>
           </Card>
 

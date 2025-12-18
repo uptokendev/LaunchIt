@@ -24,6 +24,10 @@ export interface Token {
   image: string;
   ticker: string;
   name: string;
+
+  // Address-first routing
+  campaignAddress?: string; // LaunchCampaign address
+  tokenAddress?: string; // LaunchToken address (after deploy)
   holders: string;
   volume: string;
   marketCap: string;

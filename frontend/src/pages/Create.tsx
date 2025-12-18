@@ -37,11 +37,12 @@ const Create = () => {
     processingStatus,
     processingProgress,
     startProcessing,
-  } = useTokenProcessing(formData.ticker);
+    setProcessingRedirectTo,
+  } = useTokenProcessing();
 
   // NEW: hooks for wallet + contracts
   const wallet = useWallet();
-  const { createCampaign } = useLaunchpad();
+  const { createCampaign, fetchCampaigns } = useLaunchpad();
 
   // UPDATED: async and actually calls the contract
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -103,6 +104,42 @@ const Create = () => {
       });
 
       toast.success("Campaign created on-chain!");
+
+      // Best-effort: resolve the created campaign address so we can redirect using campaignAddress-only routes.
+      try {
+        const symbol = formData.ticker.toUpperCase();
+        const creator = (wallet.account ?? "").toLowerCase();
+        const maxAttempts = 10;
+        const delayMs = 800;
+
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          const campaigns = (await fetchCampaigns()) ?? [];
+          const matches = campaigns.filter((c) =>
+            (c.creator ?? "").toLowerCase() === creator &&
+            (c.symbol ?? "").toUpperCase() === symbol
+          );
+
+          if (matches.length > 0) {
+            matches.sort((a, b) => {
+              const at = (a.createdAt ?? 0);
+              const bt = (b.createdAt ?? 0);
+              if (bt !== at) return bt - at;
+              return (b.id ?? 0) - (a.id ?? 0);
+            });
+            const newest = matches[0];
+            if (newest?.campaign) {
+              setProcessingRedirectTo(`/token/${newest.campaign}`);
+              break;
+            }
+          }
+
+          await new Promise((r) => setTimeout(r, delayMs));
+        }
+      } catch (e) {
+        // If this fails, the processing hook will fall back to /up-now
+        console.warn("[Create] Failed to resolve created campaign address", e);
+      }
+
       // After this, useTokenProcessing will handle the rest of the UX
     } catch (error: any) {
       console.error(error);

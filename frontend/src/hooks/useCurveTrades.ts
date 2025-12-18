@@ -149,7 +149,11 @@ export function useCurveTrades(
           if (tokenAmountWei === 0n) continue;
 
           cumulativeTokensWei += tokenAmountWei;
-          const pricePerToken = Number(nativeAmountWei) / Number(tokenAmountWei);
+          // IMPORTANT: avoid Number(bigint) which loses precision past 2^53.
+          // Convert to human units first.
+          const tokenAmount = Number(ethers.formatUnits(tokenAmountWei, 18));
+          const nativeAmount = Number(ethers.formatEther(nativeAmountWei));
+          const pricePerToken = tokenAmount > 0 ? nativeAmount / tokenAmount : 0;
 
           newPoints.push({
             timestamp: ts,
@@ -189,7 +193,9 @@ export function useCurveTrades(
       try {
         const latestBlock = await provider.getBlock("latest");
         const ts = latestBlock?.timestamp ?? Math.floor(Date.now() / 1000);
-        const pricePerToken = Number(cost) / Number(amountOut || 1n);
+        const tokenAmount = Number(ethers.formatUnits(amountOut || 0n, 18));
+        const nativeAmount = Number(ethers.formatEther(cost || 0n));
+        const pricePerToken = tokenAmount > 0 ? nativeAmount / tokenAmount : 0;
 
         setPoints((prev) => {
           const cumulativeTokensWei =
@@ -223,7 +229,9 @@ export function useCurveTrades(
       try {
         const latestBlock = await provider.getBlock("latest");
         const ts = latestBlock?.timestamp ?? Math.floor(Date.now() / 1000);
-        const pricePerToken = Number(payout) / Number(amountIn || 1n);
+        const tokenAmount = Number(ethers.formatUnits(amountIn || 0n, 18));
+        const nativeAmount = Number(ethers.formatEther(payout || 0n));
+        const pricePerToken = tokenAmount > 0 ? nativeAmount / tokenAmount : 0;
 
         setPoints((prev) => {
           const cumulativeTokensWei =

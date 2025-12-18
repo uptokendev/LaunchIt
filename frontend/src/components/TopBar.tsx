@@ -12,6 +12,7 @@ import { useNavigate } from "react-router-dom";
 import { useWallet, WalletType } from "@/hooks/useWallet";
 import { useLaunchpad } from "@/lib/launchpadClient";
 import type { CampaignInfo, CampaignMetrics } from "@/lib/launchpadClient";
+import { useTokenSearch } from "@/hooks/useTokenSearch";
 import { ethers } from "ethers";
 
 interface TopBarProps {
@@ -34,6 +35,10 @@ export const TopBar = ({ mobileMenuOpen, setMobileMenuOpen }: TopBarProps) => {
   const [walletModalOpen, setWalletModalOpen] = useState(false);
   const [disconnectOpen, setDisconnectOpen] = useState(false);
 
+  // Search state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [allCampaigns, setAllCampaigns] = useState<CampaignInfo[]>([]);
+
   const { fetchCampaigns, fetchCampaignMetrics } = useLaunchpad();
 
   // Ticker feed state (mock OR live depending on your switch inside useLaunchpad)
@@ -42,6 +47,12 @@ export const TopBar = ({ mobileMenuOpen, setMobileMenuOpen }: TopBarProps) => {
     Record<string, CampaignMetrics | null>
   >({});
   const [tickerLoading, setTickerLoading] = useState(true);
+
+  const { results: searchResults, loading: searchLoading, error: searchError } = useTokenSearch(
+    searchQuery,
+    allCampaigns,
+    { limit: 10, debounceMs: 250 }
+  );
 
   const shortAddress =
     wallet.account && wallet.account.length > 8
@@ -72,9 +83,11 @@ export const TopBar = ({ mobileMenuOpen, setMobileMenuOpen }: TopBarProps) => {
         setTickerLoading(true);
 
         const campaigns = await fetchCampaigns();
-        const top = (campaigns ?? []).slice(0, 12);
+        const all = campaigns ?? [];
+        const top = all.slice(0, 12);
 
         if (cancelled) return;
+        setAllCampaigns(all);
         setTickerCampaigns(top);
 
         // Best-effort metrics per campaign (don’t block UI if some fail)
@@ -150,7 +163,7 @@ export const TopBar = ({ mobileMenuOpen, setMobileMenuOpen }: TopBarProps) => {
           logoURI: (c as any).logoURI,
           subtitle: formatPrice(metrics),
           hot: sold > 0n,
-          route: `/token/${c.symbol.toLowerCase()}`,
+          route: `/token/${c.campaign.toLowerCase()}`,
         };
       });
   }, [tickerCampaigns, tickerMetricsByCampaign]);
@@ -182,8 +195,19 @@ export const TopBar = ({ mobileMenuOpen, setMobileMenuOpen }: TopBarProps) => {
 
         {/* Search */}
         <div className="flex-none w-32 sm:flex-1 sm:max-w-xs md:max-w-md mx-2 md:mx-0">
-  <SearchBar placeholder="Search tokens..." />
-</div>
+          <SearchBar
+            placeholder="Search tokens..."
+            value={searchQuery}
+            onValueChange={setSearchQuery}
+            results={searchResults}
+            loading={searchLoading}
+            error={searchError}
+            onSelectResult={(r) => {
+              setSearchQuery("");
+              navigate(`/token/${r.campaignAddress.toLowerCase()}`);
+            }}
+          />
+        </div>
 
         {/* Right side actions */}
         <div className="flex items-center gap-2 md:gap-3">
