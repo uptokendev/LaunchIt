@@ -15,6 +15,8 @@ const buildChartOnlyUrl = (base: string) =>
 type DexChartState = {
   url?: string;
   baseUrl?: string; // non-embed page URL
+  pairAddress?: string; // Pancake pair address (for on-chain charting)
+  chain?: string; // e.g. "bsc"
   liquidityBnb?: number; // best-effort, only when quote is BNB/WBNB
   loading: boolean;
   error?: string;
@@ -23,6 +25,8 @@ type DexChartState = {
 export function useDexScreenerChart(tokenAddress?: string): DexChartState {
   const [url, setUrl] = useState<string | undefined>();
   const [baseUrl, setBaseUrl] = useState<string | undefined>();
+  const [pairAddress, setPairAddress] = useState<string | undefined>();
+  const [chain, setChain] = useState<string | undefined>();
   const [liquidityBnb, setLiquidityBnb] = useState<number | undefined>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -30,6 +34,8 @@ export function useDexScreenerChart(tokenAddress?: string): DexChartState {
   useEffect(() => {
     setUrl(undefined);
     setBaseUrl(undefined);
+    setPairAddress(undefined);
+    setChain(undefined);
     setLiquidityBnb(undefined);
     setError(undefined);
 
@@ -39,6 +45,15 @@ export function useDexScreenerChart(tokenAddress?: string): DexChartState {
     if (USE_MOCK_DATA) {
       setBaseUrl(MOCK_BASE_URL);
       setUrl(buildChartOnlyUrl(MOCK_BASE_URL));
+      // Parse pair address from the mock URL: /bsc/<pair>
+      try {
+        const parts = MOCK_BASE_URL.split("/");
+        const maybePair = parts[parts.length - 1];
+        setChain(parts[parts.length - 2]);
+        setPairAddress(maybePair);
+      } catch {
+        // ignore
+      }
       return;
     }
 
@@ -101,6 +116,8 @@ export function useDexScreenerChart(tokenAddress?: string): DexChartState {
         if (!cancelled) {
           setBaseUrl(base);
           setUrl(buildChartOnlyUrl(base));
+          setPairAddress(pairAddress);
+          setChain(chain);
           setLiquidityBnb(liqBnb);
         }
       } catch (e: any) {
@@ -109,6 +126,8 @@ export function useDexScreenerChart(tokenAddress?: string): DexChartState {
           setError(e?.message || "Failed to load chart");
           setUrl(undefined);
           setBaseUrl(undefined);
+          setPairAddress(undefined);
+          setChain(undefined);
           setLiquidityBnb(undefined);
         }
       } finally {
@@ -123,5 +142,5 @@ export function useDexScreenerChart(tokenAddress?: string): DexChartState {
     };
   }, [tokenAddress]);
 
-  return { url, baseUrl, liquidityBnb, loading, error };
+  return { url, baseUrl, pairAddress, chain, liquidityBnb, loading, error };
 }

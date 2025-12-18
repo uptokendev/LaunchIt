@@ -25,7 +25,7 @@ const TokenCard = ({ token, className }: { token: Token; className?: string }) =
       className={`bg-card/40 backdrop-blur-sm rounded-xl p-3 md:p-4 border border-border hover:border-accent/50 transition-all cursor-pointer ${
         className ?? ""
       }`}
-      onClick={() => navigate(`/token/${token.ticker.toLowerCase()}`)}
+      onClick={() => token.campaignAddress && navigate(`/token/${token.campaignAddress.toLowerCase()}`)}
     >
       <div className="flex items-start gap-3">
         <img

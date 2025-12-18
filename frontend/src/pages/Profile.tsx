@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Copy, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
@@ -7,28 +7,111 @@ import { ProfileTab } from "@/types/profile";
 import { useWallet } from "@/hooks/useWallet";
 import { useLaunchpad } from "@/lib/launchpadClient";
 import type { CampaignSummary } from "@/lib/launchpadClient";
+import { BrowserProvider, Contract, ethers } from "ethers";
+
+type TokenBalanceRow = {
+  campaignAddress: string;
+  tokenAddress: string;
+  image: string;
+  name: string;
+  ticker: string;
+  balanceRaw: bigint;
+  balanceFormatted: string;
+};
+
+const ERC20_ABI_MIN = [
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "balance", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "decimals",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "decimals", type: "uint8" }],
+  },
+  {
+    type: "function",
+    name: "symbol",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "symbol", type: "string" }],
+  },
+] as const;
+
+function getExplorerBase(chainId?: number): string {
+  // BSC
+  if (chainId === 97) return "https://testnet.bscscan.com";
+  if (chainId === 56) return "https://bscscan.com";
+
+  // Fallback (keeps link valid-ish)
+  return "https://bscscan.com";
+}
+
+function shorten(addr?: string | null) {
+  if (!addr) return "";
+  if (addr.length <= 10) return addr;
+  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+}
+
+function pickTokenAddressFromSummary(s: CampaignSummary): string | null {
+  const anyCampaign: any = s?.campaign as any;
+  // Try common fields (adjust once you confirm your schema)
+  return (
+    anyCampaign?.token ||
+    anyCampaign?.tokenAddress ||
+    anyCampaign?.tokenContract ||
+    anyCampaign?.tokenAddr ||
+    null
+  );
+}
 
 const Profile = () => {
   const navigate = useNavigate();
   const wallet = useWallet();
   const { fetchCampaigns, fetchCampaignSummary } = useLaunchpad();
+
+  const anyWallet: any = wallet as any;
+
+  // Prefer an explicit isConnected flag if your hook provides it.
+  const isConnected: boolean = Boolean(
+    anyWallet?.isConnected ?? anyWallet?.connected ?? wallet.account
+  );
+
+  const account: string | null = isConnected ? (wallet.account ?? null) : null;
+  const chainId: number | undefined = anyWallet?.chainId ?? anyWallet?.network?.chainId;
+
   const [activeTab, setActiveTab] = useState<ProfileTab>("balances");
+
   const [created, setCreated] = useState<
     Array<{
       id: number;
       image: string;
       name: string;
       ticker: string;
+      campaignAddress: string;
       marketCap: string;
       timeAgo: string;
+      buyersCount?: number;
     }>
   >([]);
 
-  const walletAddress = wallet.account
-    ? wallet.account.length > 10
-      ? `${wallet.account.slice(0, 6)}...${wallet.account.slice(-4)}`
-      : wallet.account
-    : "Not connected";
+  const [nativeBalance, setNativeBalance] = useState<string>("");
+  const [tokenBalances, setTokenBalances] = useState<TokenBalanceRow[]>([]);
+  const [loadingBalances, setLoadingBalances] = useState(false);
+
+  const walletAddressShort = useMemo(() => shorten(account), [account]);
+  const walletAddressFull = account ?? "Not connected";
+
+  const explorerUrl = useMemo(() => {
+    if (!account) return "#";
+    const base = getExplorerBase(chainId);
+    return `${base}/address/${account}`;
+  }, [account, chainId]);
 
   const formatTimeAgo = (createdAt?: number): string => {
     if (!createdAt) return "";
@@ -46,29 +129,41 @@ const Profile = () => {
   };
 
   const handleCopyAddress = () => {
-    if (!wallet.account) return;
-    navigator.clipboard.writeText(wallet.account);
+    if (!account) return;
+    navigator.clipboard.writeText(account);
     toast.success("Address copied!");
   };
 
+  const handleConnect = async () => {
+    // Try common hook patterns
+    if (typeof anyWallet?.connect === "function") return anyWallet.connect();
+    if (typeof anyWallet?.openConnectModal === "function") return anyWallet.openConnectModal();
+
+    toast.message("Use the Connect Wallet button in the header to connect.");
+  };
+
+  const handleEdit = () => {
+    // MVP placeholder: later open a dialog for display name, bio, notification toggles, etc.
+    toast.message("Edit profile: coming soon (name, bio, notification settings).");
+  };
+
+  // Load created campaigns (creator view)
   useEffect(() => {
     let cancelled = false;
 
     const loadCreated = async () => {
       try {
-        if (!wallet.account) {
+        if (!account) {
           setCreated([]);
           return;
         }
 
         const campaigns = (await fetchCampaigns()) ?? [];
         const mine = campaigns.filter(
-          (c) => (c.creator ?? "").toLowerCase() === wallet.account!.toLowerCase()
+          (c) => (c.creator ?? "").toLowerCase() === account.toLowerCase()
         );
 
-        const results = await Promise.allSettled(
-          mine.map((c) => fetchCampaignSummary(c))
-        );
+        const results = await Promise.allSettled(mine.map((c) => fetchCampaignSummary(c)));
 
         if (cancelled) return;
 
@@ -83,8 +178,10 @@ const Profile = () => {
               image: s.campaign.logoURI || "/placeholder.svg",
               name: s.campaign.name,
               ticker: s.campaign.symbol,
+              campaignAddress: s.campaign.campaign,
               marketCap: s.stats.marketCap,
               timeAgo: (s.campaign as any).timeAgo || formatTimeAgo(s.campaign.createdAt),
+              buyersCount: (s.stats as any)?.buyersCount ?? undefined,
             };
           });
 
@@ -99,11 +196,149 @@ const Profile = () => {
     return () => {
       cancelled = true;
     };
-  }, [wallet.account, fetchCampaigns, fetchCampaignSummary]);
+  }, [account, fetchCampaigns, fetchCampaignSummary]);
+
+  // Load balances (native + launchpad token balances)
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadBalances = async () => {
+      try {
+        if (!account) {
+          setNativeBalance("");
+          setTokenBalances([]);
+          return;
+        }
+
+				// IMPORTANT:
+				// useWallet() exposes an Ethers BrowserProvider, which is NOT an EIP-1193 provider.
+				// viem's `custom()` transport expects an EIP-1193 provider (with `.request`).
+				// To avoid runtime failures ("reading 'bind'"), we use Ethers for reads here.
+				const injected = (window as any)?.ethereum;
+				const readProvider: BrowserProvider | null = anyWallet?.provider
+					? (anyWallet.provider as BrowserProvider)
+					: injected
+						? new BrowserProvider(
+							// Prefer MetaMask if multiple providers are injected.
+							injected.providers?.find?.((p: any) => p.isMetaMask) || injected
+						)
+						: null;
+
+				if (!readProvider) {
+					setNativeBalance("");
+					setTokenBalances([]);
+					return;
+				}
+
+        setLoadingBalances(true);
+
+        // Native (BNB) balance
+				const bal = await readProvider.getBalance(account);
+				const bnb = Number(ethers.formatEther(bal)).toFixed(4);
+        if (!cancelled) setNativeBalance(`${bnb} BNB`);
+
+        // Launchpad token balances:
+        // We scan campaigns and check balanceOf(account) for each associated token contract.
+        const campaigns = (await fetchCampaigns()) ?? [];
+        const summaries = await Promise.allSettled(
+          campaigns.map((c) => fetchCampaignSummary(c))
+        );
+
+        const fulfilled = summaries
+          .filter(
+            (r): r is PromiseFulfilledResult<CampaignSummary> => r.status === "fulfilled"
+          )
+          .map((r) => r.value);
+
+        // Build balance rows
+        const rows: TokenBalanceRow[] = [];
+
+				for (const s of fulfilled) {
+          const tokenAddr = pickTokenAddressFromSummary(s);
+          if (!tokenAddr) continue;
+
+          try {
+						const erc20 = new Contract(tokenAddr, ERC20_ABI_MIN as any, readProvider);
+						const [rawBal, decimals, symbolMaybe] = await Promise.all([
+							erc20.balanceOf(account) as Promise<bigint>,
+							erc20.decimals() as Promise<number>,
+							// symbol() can revert on weird tokens; tolerate failures
+							Promise.resolve(erc20.symbol() as Promise<string>).catch(() => null),
+						]);
+
+            if (rawBal <= 0n) continue;
+
+						const formatted = ethers.formatUnits(rawBal, decimals);
+            rows.push({
+              campaignAddress: s.campaign.campaign,
+              tokenAddress: tokenAddr,
+              image: s.campaign.logoURI || "/placeholder.svg",
+              name: s.campaign.name,
+              ticker: s.campaign.symbol || symbolMaybe || "",
+              balanceRaw: rawBal,
+              balanceFormatted: formatted,
+            });
+          } catch {
+            // ignore token read failures per token
+            continue;
+          }
+        }
+
+        if (!cancelled) {
+          // Sort biggest balances first (by raw units; acceptable for MVP)
+          setTokenBalances(rows.sort((a, b) => (a.balanceRaw > b.balanceRaw ? -1 : 1)));
+        }
+      } catch (e) {
+        console.error("[Profile] Failed to load balances", e);
+        if (!cancelled) {
+          setNativeBalance("");
+          setTokenBalances([]);
+        }
+      } finally {
+        if (!cancelled) setLoadingBalances(false);
+      }
+    };
+
+    loadBalances();
+    return () => {
+      cancelled = true;
+    };
+  }, [account, fetchCampaigns, fetchCampaignSummary]);
+
+  // Followers/Following numbers (MVP proxies)
+  const followingCount = 0; // later: number of followed creators/coins (watchlist)
+  const followersCount = useMemo(() => {
+    // MVP proxy:
+    // If you created coins, treat total buyersCount as "followers" (better label later: "Investors").
+    const sum = created.reduce((acc, c) => acc + (c.buyersCount ?? 0), 0);
+    return sum;
+  }, [created]);
 
   return (
-    <div className="fixed inset-0 pt-28 lg:pt-28 pl-0 lg:pl-72">
-      <div className="h-full p-4 md:p-6 overflow-y-auto">
+    <div className="fixed inset-0 pt-28 lg:pt-28 pl-0 lg:pl-72 relative">
+      {/* Disconnect Overlay */}
+      {!isConnected && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-sm">
+          <div className="bg-card/40 border border-border rounded-2xl p-8 text-center max-w-md w-[92%]">
+            <div className="font-retro text-foreground text-xl mb-2">Connect your wallet</div>
+            <div className="font-retro text-muted-foreground text-sm mb-6">
+              The Profile page is only available when you’re connected.
+            </div>
+            <Button
+              onClick={handleConnect}
+              className="bg-accent hover:bg-accent/80 text-accent-foreground font-retro w-full"
+            >
+              Connect Wallet
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <div
+        className={`h-full p-4 md:p-6 overflow-y-auto ${
+          !isConnected ? "blur-md pointer-events-none select-none" : ""
+        }`}
+      >
         {/* Profile Header */}
         <div className="bg-card/30 backdrop-blur-md rounded-2xl p-4 md:p-6 border border-border mb-4">
           <div className="flex flex-col md:flex-row items-start justify-between mb-6 gap-4">
@@ -120,21 +355,33 @@ const Profile = () => {
               {/* Profile Info */}
               <div className="flex-1 text-center sm:text-left">
                 <h1 className="text-2xl md:text-3xl font-retro text-foreground mb-3">
-                  {wallet.account ? walletAddress : "Profile"}
+                  {walletAddressShort || "Profile"}
                 </h1>
-                
+
                 <div className="flex flex-col sm:flex-row items-center justify-center sm:justify-start gap-2 sm:gap-3 mb-4">
-                  <span className="text-xs md:text-sm font-retro text-muted-foreground">{walletAddress}</span>
+                  <span className="text-xs md:text-sm font-retro text-muted-foreground">
+                    {walletAddressFull}
+                  </span>
+
                   <div className="flex items-center gap-2">
                     <button
                       onClick={handleCopyAddress}
                       className="p-1 hover:bg-muted rounded transition-colors"
+                      disabled={!account}
+                      title="Copy address"
                     >
                       <Copy className="h-4 w-4 text-muted-foreground" />
                     </button>
+
                     <a
-                      href="#"
-                      className="flex items-center gap-1 text-xs md:text-sm font-retro text-accent hover:text-accent/80 transition-colors"
+                      href={explorerUrl}
+                      target={account ? "_blank" : undefined}
+                      rel="noreferrer"
+                      className={`flex items-center gap-1 text-xs md:text-sm font-retro transition-colors ${
+                        account
+                          ? "text-accent hover:text-accent/80"
+                          : "text-muted-foreground pointer-events-none"
+                      }`}
                     >
                       View on explorer
                       <ExternalLink className="h-3 w-3" />
@@ -145,15 +392,21 @@ const Profile = () => {
                 {/* Stats */}
                 <div className="flex justify-center sm:justify-start gap-6 md:gap-8">
                   <div className="text-center">
-                    <div className="text-xl md:text-2xl font-retro text-foreground">7</div>
+                    <div className="text-xl md:text-2xl font-retro text-foreground">
+                      {followersCount}
+                    </div>
                     <div className="text-xs font-retro text-muted-foreground">Followers</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-xl md:text-2xl font-retro text-foreground">0</div>
+                    <div className="text-xl md:text-2xl font-retro text-foreground">
+                      {followingCount}
+                    </div>
                     <div className="text-xs font-retro text-muted-foreground">Following</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-xl md:text-2xl font-retro text-foreground">{created.length}</div>
+                    <div className="text-xl md:text-2xl font-retro text-foreground">
+                      {created.length}
+                    </div>
                     <div className="text-xs font-retro text-muted-foreground">Created coins</div>
                   </div>
                 </div>
@@ -161,7 +414,10 @@ const Profile = () => {
             </div>
 
             {/* Edit Button */}
-            <Button className="bg-muted hover:bg-muted/80 text-foreground font-retro w-full md:w-auto">
+            <Button
+              onClick={handleEdit}
+              className="bg-muted hover:bg-muted/80 text-foreground font-retro w-full md:w-auto"
+            >
               edit
             </Button>
           </div>
@@ -195,28 +451,77 @@ const Profile = () => {
           </div>
         </div>
 
-        {/* Content Area */}
+        {/* BALANCES TAB */}
         {activeTab === "balances" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {/* Left: Balances */}
             <div className="bg-card/30 backdrop-blur-md rounded-2xl p-4 md:p-6 border border-border">
-              <h3 className="text-xs md:text-sm font-retro text-muted-foreground mb-4 md:mb-6">Coins</h3>
-              
-              {/* Native tokens like SOL, USDC are not clickable */}
-              <div className="flex items-center justify-between p-3 md:p-4 bg-background/50 rounded-xl border border-border">
+              <h3 className="text-xs md:text-sm font-retro text-muted-foreground mb-4 md:mb-6">
+                Balances
+              </h3>
+
+              {/* Native balance */}
+              <div className="flex items-center justify-between p-3 md:p-4 bg-background/50 rounded-xl border border-border mb-3">
                 <div className="flex items-center gap-3 md:gap-4">
-                  <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center">
-                    <span className="text-white text-xs font-bold">SOL</span>
+                  <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-accent/20 flex items-center justify-center border border-border">
+                    <span className="text-foreground text-xs font-bold">BNB</span>
                   </div>
                   <div>
-                    <div className="font-retro text-foreground mb-1 text-sm md:text-base">Solana balance</div>
-                    <div className="text-xs md:text-sm font-retro text-muted-foreground">0.9798 SOL</div>
+                    <div className="font-retro text-foreground mb-1 text-sm md:text-base">
+                      Native balance
+                    </div>
+                    <div className="text-xs md:text-sm font-retro text-muted-foreground">
+                      {nativeBalance || (loadingBalances ? "Loading..." : "—")}
+                    </div>
                   </div>
                 </div>
-                <div className="text-right">
-                  <div className="text-xs md:text-sm font-retro text-muted-foreground">MCap</div>
-                  <div className="font-retro text-foreground text-sm md:text-base">$161</div>
-                </div>
+              </div>
+
+              {/* Launchpad token balances */}
+              <div className="space-y-3 max-h-96 overflow-y-auto scrollbar-thin scrollbar-thumb-accent/50 scrollbar-track-muted">
+                {loadingBalances && tokenBalances.length === 0 && (
+                  <div className="font-retro text-muted-foreground text-sm">Loading token balances…</div>
+                )}
+
+                {!loadingBalances && tokenBalances.length === 0 && (
+                  <div className="font-retro text-muted-foreground text-sm">
+                    No launchpad token balances found for this wallet.
+                  </div>
+                )}
+
+                {tokenBalances.map((t) => (
+                  <div
+                    key={`${t.tokenAddress}-${t.campaignAddress}`}
+                    className="flex items-center justify-between p-3 md:p-4 bg-background/50 rounded-xl border border-border hover:border-accent/50 transition-colors cursor-pointer"
+                    onClick={() => navigate(`/token/${t.campaignAddress.toLowerCase()}`)}
+                    title="Open token page"
+                  >
+                    <div className="flex items-center gap-3 md:gap-4 min-w-0">
+                      <img
+                        src={t.image}
+                        alt={t.name}
+                        className="w-10 h-10 md:w-12 md:h-12 rounded-full border-2 border-border object-cover"
+                      />
+                      <div className="min-w-0">
+                        <div className="font-retro text-foreground mb-1 text-sm md:text-base truncate">
+                          {t.name}
+                        </div>
+                        <div className="text-xs md:text-sm font-retro text-muted-foreground">
+                          {t.ticker}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="text-right shrink-0 ml-4">
+                      <div className="font-retro text-foreground text-sm md:text-base">
+                        {Number(t.balanceFormatted).toLocaleString(undefined, {
+                          maximumFractionDigits: 6,
+                        })}
+                      </div>
+                      <div className="font-retro text-muted-foreground text-xs">Balance</div>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
 
@@ -236,7 +541,7 @@ const Profile = () => {
                   <div
                     key={coin.id}
                     className="flex items-center justify-between p-3 bg-background/50 rounded-xl border border-border hover:border-accent/50 transition-colors cursor-pointer"
-                    onClick={() => navigate(`/token/${coin.ticker.toLowerCase()}`)}
+                    onClick={() => navigate(`/token/${coin.campaignAddress.toLowerCase()}`)}
                   >
                     <div className="flex items-center gap-3 flex-1 min-w-0">
                       <img
@@ -248,16 +553,12 @@ const Profile = () => {
                         <div className="font-retro text-foreground text-xs md:text-sm truncate">
                           {coin.name}
                         </div>
-                        <div className="font-retro text-muted-foreground text-xs">
-                          {coin.ticker}
-                        </div>
+                        <div className="font-retro text-muted-foreground text-xs">{coin.ticker}</div>
                       </div>
                     </div>
                     <div className="text-right shrink-0 ml-4">
                       <div className="font-retro text-foreground text-xs md:text-sm">{coin.marketCap}</div>
-                      <div className="font-retro text-muted-foreground text-xs">
-                        {coin.timeAgo}
-                      </div>
+                      <div className="font-retro text-muted-foreground text-xs">{coin.timeAgo}</div>
                     </div>
                   </div>
                 ))}
@@ -266,14 +567,85 @@ const Profile = () => {
           </div>
         )}
 
-        {/* Other tabs content */}
-        {activeTab !== "balances" && (
+        {/* COINS TAB: Tokens you invested in */}
+        {activeTab === "coins" && (
+          <div className="bg-card/30 backdrop-blur-md rounded-2xl p-4 md:p-6 border border-border">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xs md:text-sm font-retro text-foreground">
+                tokens you invested in <span className="text-muted-foreground">({tokenBalances.length})</span>
+              </h3>
+            </div>
+
+            {loadingBalances && (
+              <div className="font-retro text-muted-foreground text-sm">Loading…</div>
+            )}
+
+            {!loadingBalances && tokenBalances.length === 0 && (
+              <div className="font-retro text-muted-foreground text-sm">
+                No invested tokens detected yet. Once you buy on a curve (or hold after DEX listing), it will show here.
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {tokenBalances.map((t) => (
+                <div
+                  key={`${t.tokenAddress}-${t.campaignAddress}-coins`}
+                  className="p-4 bg-background/50 rounded-xl border border-border hover:border-accent/50 transition-colors cursor-pointer"
+                  onClick={() => navigate(`/token/${t.campaignAddress.toLowerCase()}`)}
+                >
+                  <div className="flex items-center gap-3">
+                    <img
+                      src={t.image}
+                      alt={t.name}
+                      className="w-10 h-10 rounded-full border-2 border-border object-cover"
+                    />
+                    <div className="min-w-0">
+                      <div className="font-retro text-foreground text-sm truncate">{t.name}</div>
+                      <div className="font-retro text-muted-foreground text-xs">{t.ticker}</div>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between">
+                    <div className="font-retro text-muted-foreground text-xs">Your balance</div>
+                    <div className="font-retro text-foreground text-sm">
+                      {Number(t.balanceFormatted).toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* REPLIES TAB: best-fit = Activity feed */}
+        {activeTab === "replies" && (
           <div className="bg-card/30 backdrop-blur-md rounded-2xl p-8 md:p-12 border border-border text-center">
             <p className="font-retro text-muted-foreground text-sm md:text-base">
-              {activeTab === "coins" && "No coins to display"}
-              {activeTab === "replies" && "No replies yet"}
-              {activeTab === "notifications" && "No notifications"}
-              {activeTab === "followers" && "No followers yet"}
+              Replies will become your <span className="text-foreground">Activity</span> feed:
+              buys/sells, creations, and interactions. To power this we’ll either:
+              (1) index events (recommended), or (2) fetch recent trades per campaign (heavier).
+            </p>
+          </div>
+        )}
+
+        {/* NOTIFICATIONS TAB */}
+        {activeTab === "notifications" && (
+          <div className="bg-card/30 backdrop-blur-md rounded-2xl p-8 md:p-12 border border-border text-center">
+            <p className="font-retro text-muted-foreground text-sm md:text-base">
+              Notifications MVP ideas:
+              curve at 80/90/95%, graduation, large buy alerts, your created coin milestones,
+              and “watched coins” updates. This needs either an indexer or a lightweight polling service.
+            </p>
+          </div>
+        )}
+
+        {/* FOLLOWERS TAB */}
+        {activeTab === "followers" && (
+          <div className="bg-card/30 backdrop-blur-md rounded-2xl p-8 md:p-12 border border-border text-center">
+            <p className="font-retro text-muted-foreground text-sm md:text-base">
+              Followers MVP direction:
+              for creators, show investors/holders of your coins (requires event indexing);
+              for regular users, this becomes “Creators you follow” and “Coins you watch”.
             </p>
           </div>
         )}
