@@ -30,7 +30,7 @@ export default async function handler(req, res) {
 
     return json(res, 200, { nonce, expiresAt: expiresAt.toISOString() });
   } catch (e) {
-    console.error("[api/auth/nonce]", e);
-    return json(res, 500, { error: "Server error" });
-  }
+  console.error("[api/auth/nonce]", e);
+  return json(res, 500, { error: String(e?.message ?? e) });
+}
 }
