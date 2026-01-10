@@ -8,8 +8,6 @@ import { useWallet } from "@/hooks/useWallet";
 import { useLaunchpad } from "@/lib/launchpadClient";
 import type { CampaignSummary } from "@/lib/launchpadClient";
 import { createPublicClient, custom, formatUnits } from "viem";
-import { EditProfileDialog } from "@/components/profile/EditProfileDialog";
-import { fetchUserProfile, saveUserProfile, type UserProfile } from "@/lib/profileApi";
 
 type TokenBalanceRow = {
   campaignAddress: string;
@@ -106,21 +104,7 @@ const Profile = () => {
   const [tokenBalances, setTokenBalances] = useState<TokenBalanceRow[]>([]);
   const [loadingBalances, setLoadingBalances] = useState(false);
 
-  // Profile (username / bio)
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [loadingProfile, setLoadingProfile] = useState(false);
-  const [editOpen, setEditOpen] = useState(false);
-  const [savingProfile, setSavingProfile] = useState(false);
-  const [awaitingWallet, setAwaitingWallet] = useState(false);
-
-
   const walletAddressShort = useMemo(() => shorten(account), [account]);
-
-  const displayName = useMemo(() => {
-    const u = profile?.username;
-    return u ? `@${u}` : walletAddressShort || "Profile";
-  }, [profile?.username, walletAddressShort]);
-
   const walletAddressFull = account ?? "Not connected";
 
   const explorerUrl = useMemo(() => {
@@ -128,36 +112,6 @@ const Profile = () => {
     const base = getExplorerBase(chainId);
     return `${base}/address/${account}`;
   }, [account, chainId]);
-
-  // Load profile from backend (username/bio/avatar) if configured
-  useEffect(() => {
-    let cancelled = false;
-
-    const load = async () => {
-      if (!account) {
-        setProfile(null);
-        return;
-      }
-
-      setLoadingProfile(true);
-      try {
-        const p = await fetchUserProfile(account);
-        if (!cancelled) setProfile(p);
-      } catch (e: any) {
-        // Fail gracefully if the backend is not configured or the endpoint is missing.
-        console.warn("Failed to load profile", e);
-        if (!cancelled) setProfile(null);
-      } finally {
-        if (!cancelled) setLoadingProfile(false);
-      }
-    };
-
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [account]);
-
 
   const formatTimeAgo = (createdAt?: number): string => {
     if (!createdAt) return "";
@@ -189,41 +143,8 @@ const Profile = () => {
   };
 
   const handleEdit = () => {
-    if (!account) {
-      handleConnect();
-      return;
-    }
-    setEditOpen(true);
-  };
-
-  const handleSaveProfile = async (values: { username: string; bio: string }) => {
-    if (!account) {
-      toast.error("Connect your wallet to edit your profile.");
-      return;
-    }
-
-    setSavingProfile(true);
-
-    const toastId = toast.loading("Saving profile…");
-    try {
-      const updated = await saveUserProfile({
-        walletAddress: account,
-        username: values.username,
-        bio: values.bio,
-        avatarUrl: profile?.avatarUrl ?? null,
-        signer: (wallet as any)?.signer ?? null,
-      });
-
-      setProfile(updated);
-      setEditOpen(false);
-      toast.success("Profile updated.");
-    } catch (e: any) {
-      toast.error(e?.message ?? "Failed to update profile.");
-    } finally {
-      setAwaitingWallet(false);
-      setSavingProfile(false);
-      toast.dismiss(toastId);
-    }
+    // MVP placeholder: later open a dialog for display name, bio, notification toggles, etc.
+    toast.message("Edit profile: coming soon (name, bio, notification settings).");
   };
 
   // Load created campaigns (creator view)
@@ -440,7 +361,7 @@ const [rawBal, decimals, symbolMaybe] = await Promise.all([
               {/* Avatar */}
               <div className="w-20 h-20 md:w-28 md:h-28 rounded-full bg-accent/20 border-4 border-accent/30 overflow-hidden mx-auto sm:mx-0">
                 <img
-                  src={profile?.avatarUrl || "https://images.unsplash.com/photo-1621504450181-5d356f61d307?w=200&h=200&fit=crop"}
+                  src="https://images.unsplash.com/photo-1621504450181-5d356f61d307?w=200&h=200&fit=crop"
                   alt="Profile"
                   className="w-full h-full object-cover"
                 />
@@ -449,7 +370,7 @@ const [rawBal, decimals, symbolMaybe] = await Promise.all([
               {/* Profile Info */}
               <div className="flex-1 text-center sm:text-left">
                 <h1 className="text-2xl md:text-3xl font-retro text-foreground mb-3">
-                  {displayName}
+                  {walletAddressShort || "Profile"}
                 </h1>
 
                 <div className="flex flex-col sm:flex-row items-center justify-center sm:justify-start gap-2 sm:gap-3 mb-4">
@@ -514,15 +435,6 @@ const [rawBal, decimals, symbolMaybe] = await Promise.all([
             >
               edit
             </Button>
-
-            <EditProfileDialog
-              open={editOpen}
-              onOpenChange={setEditOpen}
-              initialUsername={profile?.username ?? ""}
-              initialBio={profile?.bio ?? ""}
-              saving={savingProfile}
-              onSave={handleSaveProfile}
-            />
           </div>
 
           {/* Tabs */}
