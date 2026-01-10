@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Copy, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
@@ -7,7 +7,9 @@ import { ProfileTab } from "@/types/profile";
 import { useWallet } from "@/hooks/useWallet";
 import { useLaunchpad } from "@/lib/launchpadClient";
 import type { CampaignSummary } from "@/lib/launchpadClient";
-import { BrowserProvider, Contract, ethers } from "ethers";
+import { createPublicClient, custom, formatUnits } from "viem";
+import { EditProfileDialog } from "@/components/profile/EditProfileDialog";
+import { fetchUserProfile, saveUserProfile, type UserProfile } from "@/lib/profileApi";
 
 type TokenBalanceRow = {
   campaignAddress: string;
@@ -17,14 +19,6 @@ type TokenBalanceRow = {
   ticker: string;
   balanceRaw: bigint;
   balanceFormatted: string;
-};
-
-type UserProfileRow = {
-  address: string;
-  chainId: number;
-  displayName?: string | null;
-  avatarUrl?: string | null;
-  bio?: string | null;
 };
 
 const ERC20_ABI_MIN = [
@@ -52,8 +46,11 @@ const ERC20_ABI_MIN = [
 ] as const;
 
 function getExplorerBase(chainId?: number): string {
+  // BSC
   if (chainId === 97) return "https://testnet.bscscan.com";
   if (chainId === 56) return "https://bscscan.com";
+
+  // Fallback (keeps link valid-ish)
   return "https://bscscan.com";
 }
 
@@ -63,76 +60,9 @@ function shorten(addr?: string | null) {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
-async function safeReadJson(res: Response) {
-  const text = await res.text();
-  if (!text) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
-
-async function getNonce(chainId: number, address: string): Promise<string> {
-  const res = await fetch(
-    `/api/auth/nonce?chainId=${encodeURIComponent(String(chainId))}&address=${encodeURIComponent(
-      address.toLowerCase()
-    )}`,
-    { method: "GET" }
-  );
-
-  if (!res.ok) {
-    const j = await safeReadJson(res);
-    throw new Error(j?.error || `Nonce failed (${res.status})`);
-  }
-
-  const j = await res.json();
-  if (!j?.nonce) throw new Error("Nonce missing");
-  return String(j.nonce);
-}
-
-// MUST match backend profile.js buildProfileMessage EXACTLY
-function buildProfileMessage(args: {
-  chainId: number;
-  address: string;
-  nonce: string;
-  displayName: string;
-  avatarUrl: string; // pass "" if null
-}) {
-  const name = String(args.displayName ?? "").trim().slice(0, 32);
-  const avatar = String(args.avatarUrl ?? "").trim().slice(0, 200);
-
-  return [
-    "UPMEME Profile",
-    "Action: PROFILE_UPSERT",
-    `ChainId: ${args.chainId}`,
-    `Address: ${String(args.address).toLowerCase()}`,
-    `Nonce: ${args.nonce}`,
-    "",
-    `DisplayName: ${name}`,
-    `AvatarUrl: ${avatar}`,
-  ].join("\n");
-}
-
-async function uploadAvatar(file: File, chainId: number, address: string): Promise<string> {
-  const fd = new FormData();
-  fd.append("file", file);
-
-  const res = await fetch(
-    `/api/upload?kind=avatar&chainId=${encodeURIComponent(String(chainId))}&address=${encodeURIComponent(
-      address.toLowerCase()
-    )}`,
-    { method: "POST", body: fd }
-  );
-
-  const j = await safeReadJson(res);
-  if (!res.ok) throw new Error(j?.error || `Upload failed (${res.status})`);
-  if (!j?.url) throw new Error("Upload did not return url");
-  return String(j.url);
-}
-
 function pickTokenAddressFromSummary(s: CampaignSummary): string | null {
   const anyCampaign: any = s?.campaign as any;
+  // Try common fields (adjust once you confirm your schema)
   return (
     anyCampaign?.token ||
     anyCampaign?.tokenAddress ||
@@ -149,13 +79,13 @@ const Profile = () => {
 
   const anyWallet: any = wallet as any;
 
+  // Prefer an explicit isConnected flag if your hook provides it.
   const isConnected: boolean = Boolean(
     anyWallet?.isConnected ?? anyWallet?.connected ?? wallet.account
   );
 
   const account: string | null = isConnected ? (wallet.account ?? null) : null;
   const chainId: number | undefined = anyWallet?.chainId ?? anyWallet?.network?.chainId;
-  const effectiveChainId = Number.isFinite(chainId) ? (chainId as number) : 97;
 
   const [activeTab, setActiveTab] = useState<ProfileTab>("balances");
 
@@ -176,7 +106,21 @@ const Profile = () => {
   const [tokenBalances, setTokenBalances] = useState<TokenBalanceRow[]>([]);
   const [loadingBalances, setLoadingBalances] = useState(false);
 
+  // Profile (username / bio)
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [loadingProfile, setLoadingProfile] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [awaitingWallet, setAwaitingWallet] = useState(false);
+
+
   const walletAddressShort = useMemo(() => shorten(account), [account]);
+
+  const displayName = useMemo(() => {
+    const u = profile?.username;
+    return u ? `@${u}` : walletAddressShort || "Profile";
+  }, [profile?.username, walletAddressShort]);
+
   const walletAddressFull = account ?? "Not connected";
 
   const explorerUrl = useMemo(() => {
@@ -185,11 +129,35 @@ const Profile = () => {
     return `${base}/address/${account}`;
   }, [account, chainId]);
 
- // Avatar upload
-const fileInputRef = useRef<HTMLInputElement | null>(null);
-const [profile, setProfile] = useState<UserProfileRow | null>(null);
-const [savingProfile, setSavingProfile] = useState(false);
-const [awaitingWallet, setAwaitingWallet] = useState(false);
+  // Load profile from backend (username/bio/avatar) if configured
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      if (!account) {
+        setProfile(null);
+        return;
+      }
+
+      setLoadingProfile(true);
+      try {
+        const p = await fetchUserProfile(account);
+        if (!cancelled) setProfile(p);
+      } catch (e: any) {
+        // Fail gracefully if the backend is not configured or the endpoint is missing.
+        console.warn("Failed to load profile", e);
+        if (!cancelled) setProfile(null);
+      } finally {
+        if (!cancelled) setLoadingProfile(false);
+      }
+    };
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [account]);
+
 
   const formatTimeAgo = (createdAt?: number): string => {
     if (!createdAt) return "";
@@ -213,128 +181,52 @@ const [awaitingWallet, setAwaitingWallet] = useState(false);
   };
 
   const handleConnect = async () => {
+    // Try common hook patterns
     if (typeof anyWallet?.connect === "function") return anyWallet.connect();
     if (typeof anyWallet?.openConnectModal === "function") return anyWallet.openConnectModal();
+
     toast.message("Use the Connect Wallet button in the header to connect.");
   };
 
   const handleEdit = () => {
-    toast.message("Edit profile: coming soon (name, bio, notification settings).");
+    if (!account) {
+      handleConnect();
+      return;
+    }
+    setEditOpen(true);
   };
 
-  const handlePickAvatar = () => {
-    if (!account) return;
-    fileInputRef.current?.click();
-  };
+  const handleSaveProfile = async (values: { username: string; bio: string }) => {
+    if (!account) {
+      toast.error("Connect your wallet to edit your profile.");
+      return;
+    }
 
-  const handleAvatarFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSavingProfile(true);
+
+    const toastId = toast.loading("Saving profile…");
     try {
-      const file = e.target.files?.[0];
-      e.target.value = "";
-      if (!file) return;
-
-      if (!/^image\/(png|jpeg|jpg|webp)$/.test(file.type)) {
-        toast.error("Unsupported image type. Use PNG/JPG/WebP.");
-        return;
-      }
-      if (file.size > 500 * 1024) {
-        toast.error("Avatar too large. Keep it under 500KB for now.");
-        return;
-      }
-
-      // Ensure wallet connected + signer exists
-      if (!wallet.account) {
-        if (typeof anyWallet?.connect === "function") await anyWallet.connect();
-        else if (typeof anyWallet?.openConnectModal === "function") await anyWallet.openConnectModal();
-      }
-      if (!wallet.signer || !wallet.account) {
-        toast.error("Connect wallet to update profile.");
-        return;
-      }
-
-      setSavingProfile(true);
-
-      const address = wallet.account.toLowerCase();
-
-      // 1) upload -> url
-      const avatarUrl = await uploadAvatar(file, effectiveChainId, address);
-
-      // 2) nonce
-      const nonce = await getNonce(effectiveChainId, address);
-
-      // 3) sign message
-const displayName = String(profile?.displayName ?? "").trim();
-const bio = profile?.bio ?? null;
-
-const msg = buildProfileMessage({
-  chainId: effectiveChainId,
-  address,
-  nonce,
-  displayName,
-  avatarUrl,
-});
-
-// IMPORTANT UX: wallet confirmation prompt
-setAwaitingWallet(true);
-const toastId = toast.loading("Confirm the signature in your wallet…");
-
-let signature: string;
-try {
-  signature = await wallet.signer.signMessage(msg);
-} catch (err: any) {
-  const code = err?.code ?? err?.info?.error?.code;
-  const message = String(err?.message ?? "");
-
-  if (code === 4001 || /rejected|denied|user rejected|ACTION_REJECTED/i.test(message)) {
-    toast.error("Signature was rejected in your wallet.");
-    return;
-  }
-
-  toast.error("Signature failed. Please try again.");
-  console.error("[Profile] signMessage failed", err);
-  return;
-} finally {
-  setAwaitingWallet(false);
-  toast.dismiss(toastId);
-}
-
-      // 4) persist
-      const res = await fetch("/api/profile", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          chainId: effectiveChainId,
-          address,
-          displayName,
-          avatarUrl,
-          bio,
-          nonce,
-          signature,
-        }),
+      const updated = await saveUserProfile({
+        walletAddress: account,
+        username: values.username,
+        bio: values.bio,
+        avatarUrl: profile?.avatarUrl ?? null,
+        signer: (wallet as any)?.signer ?? null,
       });
 
-      if (!res.ok) {
-        const j = await safeReadJson(res);
-        throw new Error(j?.error || `Profile update failed (${res.status})`);
-      }
-
-      setProfile((prev) => ({
-        ...(prev ?? { address, chainId: effectiveChainId }),
-        displayName: displayName || null,
-        avatarUrl,
-        bio,
-      }));
-
-      toast.success("Avatar updated.");
-    } catch (err: any) {
-      console.error(err);
-      toast.error(err?.message || "Failed to update avatar");
+      setProfile(updated);
+      setEditOpen(false);
+      toast.success("Profile updated.");
+    } catch (e: any) {
+      toast.error(e?.message ?? "Failed to update profile.");
     } finally {
+      setAwaitingWallet(false);
       setSavingProfile(false);
+      toast.dismiss(toastId);
     }
   };
 
-  // Load created campaigns
+  // Load created campaigns (creator view)
   useEffect(() => {
     let cancelled = false;
 
@@ -346,13 +238,18 @@ try {
         }
 
         const campaigns = (await fetchCampaigns()) ?? [];
-        const mine = campaigns.filter((c) => (c.creator ?? "").toLowerCase() === account.toLowerCase());
+        const mine = campaigns.filter(
+          (c) => (c.creator ?? "").toLowerCase() === account.toLowerCase()
+        );
 
         const results = await Promise.allSettled(mine.map((c) => fetchCampaignSummary(c)));
+
         if (cancelled) return;
 
         const next = results
-          .filter((r): r is PromiseFulfilledResult<CampaignSummary> => r.status === "fulfilled")
+          .filter(
+            (r): r is PromiseFulfilledResult<CampaignSummary> => r.status === "fulfilled"
+          )
           .map((r, idx) => {
             const s = r.value;
             return {
@@ -380,44 +277,7 @@ try {
     };
   }, [account, fetchCampaigns, fetchCampaignSummary]);
 
-  // Load profile from DB
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadProfile = async () => {
-      try {
-        if (!account) {
-          setProfile(null);
-          return;
-        }
-
-        const res = await fetch(
-          `/api/profile?chainId=${encodeURIComponent(String(effectiveChainId))}&address=${encodeURIComponent(
-            account.toLowerCase()
-          )}`,
-          { method: "GET" }
-        );
-
-        if (!res.ok) {
-          const j = await safeReadJson(res);
-          throw new Error(j?.error || `Failed to load profile (${res.status})`);
-        }
-
-        const j = await res.json();
-        if (!cancelled) setProfile((j?.profile as UserProfileRow) ?? null);
-      } catch (e) {
-        console.error("[Profile] Failed to load profile", e);
-        if (!cancelled) setProfile(null);
-      }
-    };
-
-    void loadProfile();
-    return () => {
-      cancelled = true;
-    };
-  }, [account, effectiveChainId]);
-
-  // Load balances
+  // Load balances (native + launchpad token balances)
   useEffect(() => {
     let cancelled = false;
 
@@ -429,14 +289,9 @@ try {
           return;
         }
 
-        const injected = (window as any)?.ethereum;
-        const readProvider: BrowserProvider | null = anyWallet?.provider
-          ? (anyWallet.provider as BrowserProvider)
-          : injected
-            ? new BrowserProvider(injected.providers?.find?.((p: any) => p.isMetaMask) || injected)
-            : null;
-
-        if (!readProvider) {
+        const provider = anyWallet?.provider || (window as any)?.ethereum;
+        if (!provider) {
+          // Still show empty state; user might be connected via another flow
           setNativeBalance("");
           setTokenBalances([]);
           return;
@@ -444,17 +299,29 @@ try {
 
         setLoadingBalances(true);
 
-        const bal = await readProvider.getBalance(account);
-        const bnb = Number(ethers.formatEther(bal)).toFixed(4);
+        const client = createPublicClient({
+          transport: custom(provider),
+        });
+
+        // Native (BNB) balance
+        const bal = await client.getBalance({ address: account as any });
+        const bnb = Number(formatUnits(bal, 18)).toFixed(4);
         if (!cancelled) setNativeBalance(`${bnb} BNB`);
 
+        // Launchpad token balances:
+        // We scan campaigns and check balanceOf(account) for each associated token contract.
         const campaigns = (await fetchCampaigns()) ?? [];
-        const summaries = await Promise.allSettled(campaigns.map((c) => fetchCampaignSummary(c)));
+        const summaries = await Promise.allSettled(
+          campaigns.map((c) => fetchCampaignSummary(c))
+        );
 
         const fulfilled = summaries
-          .filter((r): r is PromiseFulfilledResult<CampaignSummary> => r.status === "fulfilled")
+          .filter(
+            (r): r is PromiseFulfilledResult<CampaignSummary> => r.status === "fulfilled"
+          )
           .map((r) => r.value);
 
+        // Build balance rows
         const rows: TokenBalanceRow[] = [];
 
         for (const s of fulfilled) {
@@ -462,16 +329,40 @@ try {
           if (!tokenAddr) continue;
 
           try {
-            const erc20 = new Contract(tokenAddr, ERC20_ABI_MIN as any, readProvider);
-            const [rawBal, decimals, symbolMaybe] = await Promise.all([
-              erc20.balanceOf(account) as Promise<bigint>,
-              erc20.decimals() as Promise<number>,
-              Promise.resolve(erc20.symbol() as Promise<string>).catch(() => null),
-            ]);
+            const auth = [] as any; // viem type requirement (authorizationList)
+
+const token0x = tokenAddr as `0x${string}`;
+const acct0x = account as `0x${string}`;
+
+const [rawBal, decimals, symbolMaybe] = await Promise.all([
+  client.readContract({
+    address: token0x,
+    abi: ERC20_ABI_MIN,
+    functionName: "balanceOf",
+    args: [acct0x],
+    authorizationList: auth,
+  }) as Promise<bigint>,
+
+  client.readContract({
+    address: token0x,
+    abi: ERC20_ABI_MIN,
+    functionName: "decimals",
+    authorizationList: auth,
+  }) as Promise<number>,
+
+  client
+    .readContract({
+      address: token0x,
+      abi: ERC20_ABI_MIN,
+      functionName: "symbol",
+      authorizationList: auth,
+    })
+    .catch(() => null) as Promise<string | null>,
+]);
 
             if (rawBal <= 0n) continue;
 
-            const formatted = ethers.formatUnits(rawBal, decimals);
+            const formatted = formatUnits(rawBal, decimals);
             rows.push({
               campaignAddress: s.campaign.campaign,
               tokenAddress: tokenAddr,
@@ -482,11 +373,13 @@ try {
               balanceFormatted: formatted,
             });
           } catch {
+            // ignore token read failures per token
             continue;
           }
         }
 
         if (!cancelled) {
+          // Sort biggest balances first (by raw units; acceptable for MVP)
           setTokenBalances(rows.sort((a, b) => (a.balanceRaw > b.balanceRaw ? -1 : 1)));
         }
       } catch (e) {
@@ -506,14 +399,18 @@ try {
     };
   }, [account, fetchCampaigns, fetchCampaignSummary]);
 
-  const followingCount = 0;
+  // Followers/Following numbers (MVP proxies)
+  const followingCount = 0; // later: number of followed creators/coins (watchlist)
   const followersCount = useMemo(() => {
+    // MVP proxy:
+    // If you created coins, treat total buyersCount as "followers" (better label later: "Investors").
     const sum = created.reduce((acc, c) => acc + (c.buyersCount ?? 0), 0);
     return sum;
   }, [created]);
 
   return (
-    <div className="h-full w-full relative">
+    <div className="fixed inset-0 pt-28 lg:pt-28 pl-0 lg:pl-72 relative">
+      {/* Disconnect Overlay */}
       {!isConnected && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-sm">
           <div className="bg-card/40 border border-border rounded-2xl p-8 text-center max-w-md w-[92%]">
@@ -531,45 +428,28 @@ try {
         </div>
       )}
 
-      <div className={`h-full p-4 md:p-6 overflow-y-auto ${!isConnected ? "blur-md pointer-events-none select-none" : ""}`}>
+      <div
+        className={`h-full p-4 md:p-6 overflow-y-auto ${
+          !isConnected ? "blur-md pointer-events-none select-none" : ""
+        }`}
+      >
+        {/* Profile Header */}
         <div className="bg-card/30 backdrop-blur-md rounded-2xl p-4 md:p-6 border border-border mb-4">
           <div className="flex flex-col md:flex-row items-start justify-between mb-6 gap-4">
             <div className="flex flex-col sm:flex-row gap-4 md:gap-6 w-full md:w-auto">
-              <div className="flex flex-col items-center sm:items-start gap-3">
-                {/* Avatar */}
-                <div
-                  className="w-20 h-20 md:w-28 md:h-28 rounded-full bg-accent/20 border-4 border-accent/30 overflow-hidden mx-auto sm:mx-0 cursor-pointer hover:opacity-90 transition"
-                  onClick={() => !savingProfile && handlePickAvatar()}
-                  title="Change avatar"
-                >
-                  <img
-                    src={profile?.avatarUrl || "/placeholder.svg"}
-                    alt="Profile"
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/png,image/jpeg,image/jpg,image/webp"
-                  className="hidden"
-                  onChange={handleAvatarFileChange}
+              {/* Avatar */}
+              <div className="w-20 h-20 md:w-28 md:h-28 rounded-full bg-accent/20 border-4 border-accent/30 overflow-hidden mx-auto sm:mx-0">
+                <img
+                  src={profile?.avatarUrl || "https://images.unsplash.com/photo-1621504450181-5d356f61d307?w=200&h=200&fit=crop"}
+                  alt="Profile"
+                  className="w-full h-full object-cover"
                 />
-
-                <Button
-                  onClick={handlePickAvatar}
-                  disabled={!account || savingProfile}
-                  className="bg-muted hover:bg-muted/80 text-foreground font-retro w-full sm:w-auto"
-                >
-                  {savingProfile ? (awaitingWallet ? "confirm in wallet..." : "uploading...") : "change avatar"}
-                </Button>
               </div>
 
               {/* Profile Info */}
               <div className="flex-1 text-center sm:text-left">
                 <h1 className="text-2xl md:text-3xl font-retro text-foreground mb-3">
-                  {walletAddressShort || "Profile"}
+                  {displayName}
                 </h1>
 
                 <div className="flex flex-col sm:flex-row items-center justify-center sm:justify-start gap-2 sm:gap-3 mb-4">
@@ -592,7 +472,9 @@ try {
                       target={account ? "_blank" : undefined}
                       rel="noreferrer"
                       className={`flex items-center gap-1 text-xs md:text-sm font-retro transition-colors ${
-                        account ? "text-accent hover:text-accent/80" : "text-muted-foreground pointer-events-none"
+                        account
+                          ? "text-accent hover:text-accent/80"
+                          : "text-muted-foreground pointer-events-none"
                       }`}
                     >
                       View on explorer
@@ -632,6 +514,15 @@ try {
             >
               edit
             </Button>
+
+            <EditProfileDialog
+              open={editOpen}
+              onOpenChange={setEditOpen}
+              initialUsername={profile?.username ?? ""}
+              initialBio={profile?.bio ?? ""}
+              saving={savingProfile}
+              onSave={handleSaveProfile}
+            />
           </div>
 
           {/* Tabs */}
@@ -639,7 +530,7 @@ try {
             {[
               { id: "balances" as ProfileTab, label: "Balances", badge: null },
               { id: "coins" as ProfileTab, label: "Coins", badge: null },
-              { id: "Replies" as ProfileTab, label: "Replies", badge: null },
+              { id: "replies" as ProfileTab, label: "Replies", badge: null },
               { id: "notifications" as ProfileTab, label: "Notifications", badge: 13 },
               { id: "followers" as ProfileTab, label: "Followers", badge: null },
             ].map((tab) => (
@@ -726,7 +617,9 @@ try {
 
                     <div className="text-right shrink-0 ml-4">
                       <div className="font-retro text-foreground text-sm md:text-base">
-                        {Number(t.balanceFormatted).toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                        {Number(t.balanceFormatted).toLocaleString(undefined, {
+                          maximumFractionDigits: 6,
+                        })}
                       </div>
                       <div className="font-retro text-muted-foreground text-xs">Balance</div>
                     </div>
@@ -777,7 +670,7 @@ try {
           </div>
         )}
 
-        {/* COINS TAB */}
+        {/* COINS TAB: Tokens you invested in */}
         {activeTab === "coins" && (
           <div className="bg-card/30 backdrop-blur-md rounded-2xl p-4 md:p-6 border border-border">
             <div className="flex items-center justify-between mb-4">
@@ -786,7 +679,9 @@ try {
               </h3>
             </div>
 
-            {loadingBalances && <div className="font-retro text-muted-foreground text-sm">Loading…</div>}
+            {loadingBalances && (
+              <div className="font-retro text-muted-foreground text-sm">Loading…</div>
+            )}
 
             {!loadingBalances && tokenBalances.length === 0 && (
               <div className="font-retro text-muted-foreground text-sm">
@@ -825,7 +720,7 @@ try {
           </div>
         )}
 
-        {/* REPLIES TAB */}
+        {/* REPLIES TAB: best-fit = Activity feed */}
         {activeTab === "replies" && (
           <div className="bg-card/30 backdrop-blur-md rounded-2xl p-8 md:p-12 border border-border text-center">
             <p className="font-retro text-muted-foreground text-sm md:text-base">
