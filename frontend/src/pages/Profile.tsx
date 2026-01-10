@@ -377,27 +377,36 @@ const Profile = () => {
           if (!tokenAddr) continue;
 
           try {
-            const [rawBal, decimals, symbolMaybe] = await Promise.all([
-              client.readContract({
-                address: tokenAddr as any,
-                abi: ERC20_ABI_MIN,
-                functionName: "balanceOf",
-                args: [account as any],
-              }) as Promise<bigint>,
-              client.readContract({
-                address: tokenAddr as any,
-                abi: ERC20_ABI_MIN,
-                functionName: "decimals",
-              }) as Promise<number>,
-              // symbol() can revert on weird tokens; tolerate failures
-              client
-                .readContract({
-                  address: tokenAddr as any,
-                  abi: ERC20_ABI_MIN,
-                  functionName: "symbol",
-                })
-                .catch(() => null) as Promise<string | null>,
-            ]);
+            const auth = [] as any; // viem type requirement (authorizationList)
+
+const token0x = tokenAddr as `0x${string}`;
+const acct0x = account as `0x${string}`;
+
+const [rawBal, decimals, symbolMaybe] = await Promise.all([
+  client.readContract({
+    address: token0x,
+    abi: ERC20_ABI_MIN,
+    functionName: "balanceOf",
+    args: [acct0x],
+    authorizationList: auth,
+  }) as Promise<bigint>,
+
+  client.readContract({
+    address: token0x,
+    abi: ERC20_ABI_MIN,
+    functionName: "decimals",
+    authorizationList: auth,
+  }) as Promise<number>,
+
+  client
+    .readContract({
+      address: token0x,
+      abi: ERC20_ABI_MIN,
+      functionName: "symbol",
+      authorizationList: auth,
+    })
+    .catch(() => null) as Promise<string | null>,
+]);
 
             if (rawBal <= 0n) continue;
 
