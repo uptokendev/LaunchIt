@@ -508,9 +508,15 @@ export function useLaunchpad() {
       try {
         if (metrics) {
           const token = new Contract(campaign.token, TOKEN_ABI, readProvider) as any;
-          const totalSupply: bigint = await token.totalSupply();
-          const mcWei = (metrics.currentPrice * totalSupply) / 10n ** 18n;
-          marketCap = formatBnbFromWei(mcWei);
+const totalSupply: bigint = await token.totalSupply();
+
+// During bonding, only *sold* tokens are circulating.
+// The remaining supply is still held/reserved by the campaign (e.g., liquidity/creator allocations).
+// After graduation (launched), we fall back to totalSupply as circulating if no DEX market cap is available.
+const circulating: bigint = metrics.launched ? totalSupply : metrics.sold;
+
+const mcWei = (metrics.currentPrice * circulating) / 10n ** 18n;
+marketCap = formatBnbFromWei(mcWei);
         }
       } catch (e) {
         console.warn("[fetchCampaignSummary] market cap calc failed", e);
