@@ -1,336 +1,291 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Contract, ethers } from "ethers";
-import { useWallet } from "@/hooks/useWallet";
-import type { Transaction } from "@/types/token";
-import LaunchCampaignArtifact from "@/abi/LaunchCampaign.json";
-import { getReadProvider } from "@/lib/readProvider";
+import Ably from "ably";
+import { ethers } from "ethers";
+import { getActiveChainId, type SupportedChainId } from "@/lib/chainConfig";
 
-// Public RPCs (and MetaMask) often rate-limit eth_getLogs, especially when requests are batched.
-// We:
-//  - prefer a configured RPC for reads (VITE_BSC_TESTNET_RPC / VITE_BSC_MAINNET_RPC)
-//  - disable ethers batching (batchMaxCount: 1) via getReadProvider()
-//  - chunk getLogs ranges to avoid provider max-range errors
-//  - use a per-campaign startBlock (deployment block) so we never "miss" older trades on testnet
-//  - incrementally reconcile from the last scanned block with a small overlap
+// Realtime-indexer HTTP base (Railway). Example: https://upmeme-production.up.railway.app
+const API_BASE = String(import.meta.env.VITE_REALTIME_API_BASE || "").replace(/\/$/, "");
+const ABLY_KEY_NAME = String(import.meta.env.VITE_ABLY_CLIENT_KEY || "").trim();
 
-const TARGET_CHAIN_ID = Number(import.meta.env.VITE_TARGET_CHAIN_ID ?? "97");
+type RealtimeChannel = ReturnType<Ably.Realtime["channels"]["get"]>;
 
-const toAbi = (x: any) => (x?.abi ?? x) as ethers.InterfaceAbi;
-const CAMPAIGN_ABI = toAbi(LaunchCampaignArtifact);
-
-type CurveTrade = Transaction & {
-  // internal fields used by TokenDetails UI
+export type CurveTradePoint = {
+  type: "buy" | "sell";
   from: string;
   to: string;
   tokensWei: bigint;
   nativeWei: bigint;
-  pricePerToken: number;
-  timestamp: number;
+  pricePerToken: number; // BNB per token
+  timestamp: number; // unix seconds
   txHash: string;
   blockNumber: number;
-  logIndex?: number;
+  logIndex: number;
 };
 
-function lsKeyDeploy(chainId: number, addr: string) {
-  return `launchit:campaignDeployBlock:${chainId}:${addr.toLowerCase()}`;
-}
-function lsKeyCursor(chainId: number, addr: string) {
-  return `launchit:curveTradesCursor:${chainId}:${addr.toLowerCase()}`;
-}
+type UseCurveTradesOptions = {
+  enabled?: boolean;
+  chainId?: number;
+  limit?: number;
+  /** Safety net: periodically re-fetch snapshot to reconcile any missed messages. */
+  reconcileMs?: number;
+};
 
-function safeParseInt(v: string | null): number | null {
-  if (!v) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
-async function findContractDeployBlock(provider: ethers.Provider, address: string, latest: number): Promise<number> {
-  // Binary-search for first block where getCode(address) != "0x"
-  let lo = 0;
-  let hi = latest;
-  let found = latest;
-
-  // Fast-path: if no code at latest, it's not a contract (or wrong chain)
-  const codeLatest = await provider.getCode(address, latest);
-  if (!codeLatest || codeLatest === "0x") return Math.max(0, latest - 12_000);
-
-  while (lo <= hi) {
-    const mid = Math.floor((lo + hi) / 2);
-    const code = await provider.getCode(address, mid);
-    const hasCode = !!code && code !== "0x";
-    if (hasCode) {
-      found = mid;
-      hi = mid - 1;
-    } else {
-      lo = mid + 1;
-    }
-  }
-  return Math.max(0, found - 5); // small margin
+function keyOf(t: Pick<CurveTradePoint, "txHash" | "logIndex">) {
+  return `${t.txHash.toLowerCase()}:${Number(t.logIndex ?? 0)}`;
 }
 
-const LOG_CHUNK_SIZE = 500;
-
-async function getLogsChunked(
-  provider: any,
-  params: { address: string; topics?: (string | string[] | null)[] },
-  fromBlock: number,
-  toBlock: number
-) {
-  const logs: any[] = [];
-  for (let start = fromBlock; start <= toBlock; start += LOG_CHUNK_SIZE) {
-    const end = Math.min(toBlock, start + LOG_CHUNK_SIZE - 1);
-
-    // Basic retry for flaky public endpoints
-    let lastErr: any = null;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const chunk = await provider.getLogs({ ...params, fromBlock: start, toBlock: end });
-        logs.push(...chunk);
-        lastErr = null;
-        break;
-      } catch (e: any) {
-        lastErr = e;
-        // small backoff
-        await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
-      }
-    }
-    if (lastErr) throw lastErr;
-  }
-  return logs;
+function sortAsc(a: CurveTradePoint, b: CurveTradePoint) {
+  if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
+  return Number(a.logIndex ?? 0) - Number(b.logIndex ?? 0);
 }
 
-function mergeTrades(prev: CurveTrade[], next: CurveTrade[]) {
-  const map = new Map<string, CurveTrade>();
-  const keyOf = (t: any) => `${String(t.txHash ?? t.tx)}:${Number(t.logIndex ?? 0)}`;
+function mergeTrades(prev: CurveTradePoint[], next: CurveTradePoint[]) {
+  const map = new Map<string, CurveTradePoint>();
   for (const t of prev) map.set(keyOf(t), t);
   for (const t of next) map.set(keyOf(t), t);
-  return Array.from(map.values()).sort((a, b) => {
-    const bnA = Number((a as any).blockNumber ?? 0);
-    const bnB = Number((b as any).blockNumber ?? 0);
-    if (bnA !== bnB) return bnA - bnB;
-    const liA = Number((a as any).logIndex ?? 0);
-    const liB = Number((b as any).logIndex ?? 0);
-    return liA - liB;
-  });
+  return Array.from(map.values()).sort(sortAsc);
+}
+
+function toBigIntWei(amount: unknown, kind: "ether" | "token"): bigint {
+  // Postgres numerics often come through as strings (best case).
+  const s = typeof amount === "string" ? amount : typeof amount === "number" ? String(amount) : "0";
+  try {
+    if (kind === "ether") return ethers.parseEther(s);
+    return ethers.parseUnits(s, 18);
+  } catch {
+    return 0n;
+  }
+}
+
+function toNumber(amount: unknown): number {
+  if (typeof amount === "number") return amount;
+  if (typeof amount === "string") {
+    const n = Number(amount);
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+
+function toTimestampSec(v: unknown): number {
+  // pg can return Date objects or ISO strings depending on config
+  try {
+    if (v instanceof Date) return Math.floor(v.getTime() / 1000);
+    const ms = new Date(String(v)).getTime();
+    return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function fetchJson(url: string, signal?: AbortSignal) {
+  const r = await fetch(url, { method: "GET", signal });
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    throw new Error(text || `HTTP ${r.status}`);
+  }
+  return r.json();
 }
 
 /**
- * Fetches curve trades (TokensPurchased / TokensSold) for a campaign and exposes
- * them as enriched trade points for the TokenDetails UI and chart.
+ * Curve trades (bonding curve) backed by:
+ *  1) Snapshot: Railway realtime-indexer REST endpoint
+ *  2) Realtime: Ably channel updates
+ *  3) Safety: periodic snapshot reconcile to avoid drift under heavy load
  */
-export function useCurveTrades(campaignAddress?: string) {
-  const { chainId } = useWallet() as any;
-
-  const readProvider = useMemo(() => {
-    const cid = Number(chainId ?? TARGET_CHAIN_ID);
-    return getReadProvider(cid);
-  }, [chainId]);
-
-  const [points, setPoints] = useState<CurveTrade[]>([]);
+export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOptions) {
+  const enabled = opts?.enabled ?? true;
+  const [points, setPoints] = useState<CurveTradePoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const chainId = useMemo<SupportedChainId>(() => {
+    const cid = Number(opts?.chainId ?? 97);
+    return getActiveChainId(cid);
+  }, [opts?.chainId]);
+
+  const ablyRef = useRef<Ably.Realtime | null>(null);
+  const channelRef = useRef<RealtimeChannel | null>(null);
   const inFlightRef = useRef(false);
-  const deployBlockRef = useRef<number | null>(null);
-  const cursorRef = useRef<number | null>(null);
 
-  // Reset cursors on campaign change
-  useEffect(() => {
-    deployBlockRef.current = null;
-    cursorRef.current = null;
-    setPoints([]);
-    setLoading(true);
-    setError(null);
-  }, [campaignAddress, chainId]);
+  const reconcileMs = opts?.reconcileMs ?? 10_000;
+  const limit = Math.min(Math.max(Number(opts?.limit ?? 200), 1), 200);
 
-  const fetchTrades = useCallback(async () => {
-    if (!campaignAddress) {
+  const apiTradesUrl = useMemo(() => {
+    if (!API_BASE || !campaignAddress) return "";
+    return `${API_BASE}/api/token/${campaignAddress.toLowerCase()}/trades?chainId=${chainId}&limit=${limit}`;
+  }, [campaignAddress, chainId, limit]);
+
+  const applySnapshot = useCallback((rows: any[]) => {
+    const next: CurveTradePoint[] = (rows || [])
+      .map((r: any) => {
+        const side = String(r.side || r.type || "").toLowerCase() === "sell" ? "sell" : "buy";
+        const txHash = String(r.tx_hash || r.txHash || "");
+        const logIndex = Number(r.log_index ?? r.logIndex ?? 0);
+        const blockNumber = Number(r.block_number ?? r.blockNumber ?? 0);
+        const ts = toTimestampSec(r.block_time ?? r.timestamp ?? r.time);
+
+        const tokensWei = toBigIntWei(r.token_amount ?? r.tokens ?? r.tokensWei, "token");
+        const nativeWei = toBigIntWei(r.bnb_amount ?? r.native ?? r.nativeWei, "ether");
+
+        const tokens = Number(ethers.formatUnits(tokensWei, 18));
+        const bnb = Number(ethers.formatEther(nativeWei));
+        const pricePerToken = toNumber(r.price_bnb ?? r.pricePerToken) || (tokens > 0 ? bnb / tokens : 0);
+
+        return {
+          type: side,
+          from: String(r.wallet || r.trader || r.from || "").toLowerCase(),
+          to: String(campaignAddress || "").toLowerCase(),
+          tokensWei,
+          nativeWei,
+          pricePerToken,
+          timestamp: ts,
+          txHash,
+          blockNumber,
+          logIndex,
+        } satisfies CurveTradePoint;
+      })
+      .filter((t) => /^0x[a-f0-9]{64}$/i.test(t.txHash) && Number.isFinite(t.blockNumber));
+
+    setPoints((prev) => mergeTrades(prev, next));
+  }, [campaignAddress]);
+
+  const pullSnapshot = useCallback(async (signal?: AbortSignal) => {
+    if (!enabled || !campaignAddress) {
       setPoints([]);
       setLoading(false);
       setError(null);
       return;
     }
-    if (!readProvider) return;
+    if (!apiTradesUrl) {
+      setError("Missing VITE_REALTIME_API_BASE");
+      setLoading(false);
+      return;
+    }
     if (inFlightRef.current) return;
-
     inFlightRef.current = true;
+    try {
+      setLoading(true);
+      const rows = await fetchJson(apiTradesUrl, signal);
+      applySnapshot(Array.isArray(rows) ? rows : []);
+      setError(null);
+    } catch (e: any) {
+      const msg = e?.message || "Failed to load trades";
+      setError(String(msg));
+    } finally {
+      setLoading(false);
+      inFlightRef.current = false;
+    }
+  }, [enabled, campaignAddress, apiTradesUrl, applySnapshot]);
+
+  // Initial snapshot + periodic reconcile
+  useEffect(() => {
+    const ac = new AbortController();
+    setPoints([]);
     setLoading(true);
     setError(null);
 
-    try {
-      const latest = await readProvider.getBlockNumber();
-      const cid = Number(chainId ?? TARGET_CHAIN_ID);
+    pullSnapshot(ac.signal);
 
-      // Resolve deployment/start block once and cache it (prevents missing older trades on testnet).
-      if (deployBlockRef.current == null) {
-        const k = lsKeyDeploy(cid, campaignAddress);
-        const cached = safeParseInt(localStorage.getItem(k));
-        if (cached != null && cached >= 0 && cached <= latest) {
-          deployBlockRef.current = cached;
-        } else {
-          const found = await findContractDeployBlock(readProvider, campaignAddress, latest);
-          deployBlockRef.current = found;
-          try {
-            localStorage.setItem(k, String(found));
-          } catch {
-            // ignore
-          }
-        }
-      }
+    if (!enabled || !campaignAddress) return () => ac.abort();
 
-      // Cursor: after first full load, only scan recent blocks with overlap, then merge results.
-      if (cursorRef.current == null) {
-        const ck = lsKeyCursor(cid, campaignAddress);
-        const cachedCursor = safeParseInt(localStorage.getItem(ck));
-        if (cachedCursor != null && cachedCursor > 0 && cachedCursor <= latest) {
-          cursorRef.current = cachedCursor;
-        }
-      }
-
-      const startBlock = deployBlockRef.current ?? Math.max(0, latest - 12_000);
-      const overlap = 10;
-      const fromBlock = cursorRef.current == null ? startBlock : Math.max(startBlock, cursorRef.current - overlap);
-      const toBlock = latest;
-
-      const iface = new ethers.Interface(CAMPAIGN_ABI);
-      const buyTopic = iface.getEvent("TokensPurchased").topicHash;
-      const sellTopic = iface.getEvent("TokensSold").topicHash;
-
-      const [buyLogs, sellLogs] = await Promise.all([
-        getLogsChunked(readProvider, { address: campaignAddress, topics: [buyTopic] }, fromBlock, toBlock),
-        getLogsChunked(readProvider, { address: campaignAddress, topics: [sellTopic] }, fromBlock, toBlock),
-      ]);
-
-      const parsedBuys: CurveTrade[] = buyLogs
-        .map((log) => {
-          try {
-            const parsed = iface.parseLog(log);
-            const buyer = String(parsed.args.buyer).toLowerCase();
-            const tokensWei = parsed.args.amountOut as bigint;
-            const nativeWei = parsed.args.cost as bigint;
-
-            const tokens = Number(ethers.formatUnits(tokensWei, 18));
-            const native = Number(ethers.formatEther(nativeWei));
-            const pricePerToken = native / Math.max(1e-18, tokens);
-
-            return {
-              type: "buy" as any,
-              from: buyer,
-              to: campaignAddress.toLowerCase(),
-              tokensWei,
-              nativeWei,
-              pricePerToken,
-              timestamp: 0,
-              txHash: String(log.transactionHash),
-              blockNumber: Number(log.blockNumber),
-              logIndex: Number((log as any).index ?? (log as any).logIndex ?? 0),
-            } as any;
-          } catch {
-            return null;
-          }
-        })
-        .filter(Boolean) as CurveTrade[];
-
-      const parsedSells: CurveTrade[] = sellLogs
-        .map((log) => {
-          try {
-            const parsed = iface.parseLog(log);
-            const seller = String(parsed.args.seller).toLowerCase();
-            const tokensWei = parsed.args.amountIn as bigint;
-            const nativeWei = parsed.args.payout as bigint;
-
-            const tokens = Number(ethers.formatUnits(tokensWei, 18));
-            const native = Number(ethers.formatEther(nativeWei));
-            const pricePerToken = native / Math.max(1e-18, tokens);
-
-            return {
-              type: "sell" as any,
-              from: seller,
-              to: campaignAddress.toLowerCase(),
-              tokensWei,
-              nativeWei,
-              pricePerToken,
-              timestamp: 0,
-              txHash: String(log.transactionHash),
-              blockNumber: Number(log.blockNumber),
-              logIndex: Number((log as any).index ?? (log as any).logIndex ?? 0),
-            } as any;
-          } catch {
-            return null;
-          }
-        })
-        .filter(Boolean) as CurveTrade[];
-
-      const combined = [...parsedBuys, ...parsedSells].sort((a, b) => {
-        if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
-        return Number(a.logIndex ?? 0) - Number(b.logIndex ?? 0);
-      });
-
-      // fetch timestamps for unique blocks only
-      const uniqueBlocks = Array.from(new Set(combined.map((t) => t.blockNumber).filter((n) => Number.isFinite(n))));
-      const blockTs = new Map<number, number>();
-
-      for (const bn of uniqueBlocks) {
-        try {
-          const b = await readProvider.getBlock(bn);
-          if (b?.timestamp) blockTs.set(bn, Number(b.timestamp));
-        } catch {
-          // ignore
-        }
-      }
-
-      const newPoints = combined.map((t) => ({
-        ...t,
-        timestamp: blockTs.get(t.blockNumber) ?? 0,
-      }));
-
-      setPoints((prev) => mergeTrades(prev, newPoints));
-      setLoading(false);
-      setError(null);
-
-      cursorRef.current = latest;
-      try {
-        localStorage.setItem(lsKeyCursor(cid, campaignAddress), String(latest));
-      } catch {
-        // ignore
-      }
-    } catch (e: any) {
-      const msg = e?.shortMessage || e?.message || "Failed to load curve trades";
-      setError(String(msg));
-      setLoading(false);
-      // Keep previous points so UI doesn't thrash to empty every time a public RPC hiccups
-    } finally {
-      inFlightRef.current = false;
-    }
-  }, [campaignAddress, readProvider, chainId]);
-
-  // Near-realtime updates: listen for new blocks (JsonRpcProvider does this via polling).
-  useEffect(() => {
-    fetchTrades();
-    if (!readProvider || !campaignAddress) return;
-
-    const onBlock = () => {
-      fetchTrades();
-    };
-
-    try {
-      readProvider.on("block", onBlock);
-    } catch {
-      // ignore
-    }
-
-    // Fallback interval (in case block events are not supported)
-    const t = setInterval(fetchTrades, 10_000);
+    const t = setInterval(() => {
+      pullSnapshot(ac.signal);
+    }, reconcileMs);
 
     return () => {
       clearInterval(t);
+      ac.abort();
+    };
+  }, [enabled, campaignAddress, chainId, pullSnapshot, reconcileMs]);
+
+  // Ably realtime stream (trade events)
+  useEffect(() => {
+    if (!enabled || !campaignAddress) return;
+    if (!API_BASE) return;
+    if (!ABLY_KEY_NAME) {
+      // Not fatal: snapshots still work
+      return;
+    }
+
+    const authUrl = `${API_BASE}/api/ably/token?chainId=${chainId}&campaign=${campaignAddress.toLowerCase()}`;
+    const ably = new Ably.Realtime({
+      key: ABLY_KEY_NAME,
+      authUrl,
+      authMethod: "GET",
+      // Ably uses its own backoff internally; keep a conservative retry
+      recover: (last, cb) => cb(true),
+    });
+
+    ablyRef.current = ably;
+    const channelName = `token:${chainId}:${campaignAddress.toLowerCase()}`;
+    const ch = ably.channels.get(channelName);
+    channelRef.current = ch;
+
+    const onTrade = (msg: any) => {
+      const data: any = msg.data;
+      if (!data) return;
+      if ((msg.name || "") !== "trade" && String(data.type || "") !== "trade") return;
+
+      const side = String(data.side || data.type || "").toLowerCase() === "sell" ? "sell" : "buy";
+      const txHash = String(data.txHash || data.tx_hash || "");
+      const logIndex = Number(data.logIndex ?? data.log_index ?? 0);
+      const blockNumber = Number(data.blockNumber ?? data.block_number ?? 0);
+      const ts = Number(data.timestamp ?? 0);
+
+      const tokensWei = toBigIntWei(data.tokenAmount ?? data.token_amount ?? data.tokensWei, "token");
+      const nativeWei = toBigIntWei(data.bnbAmount ?? data.bnb_amount ?? data.nativeWei, "ether");
+
+      const tokens = Number(ethers.formatUnits(tokensWei, 18));
+      const bnb = Number(ethers.formatEther(nativeWei));
+      const pricePerToken = toNumber(data.priceBnb ?? data.price_bnb ?? data.pricePerToken) || (tokens > 0 ? bnb / tokens : 0);
+
+      const t: CurveTradePoint = {
+        type: side,
+        from: String(data.wallet || data.trader || data.from || "").toLowerCase(),
+        to: String(campaignAddress).toLowerCase(),
+        tokensWei,
+        nativeWei,
+        pricePerToken,
+        timestamp: Number.isFinite(ts) ? ts : 0,
+        txHash,
+        blockNumber,
+        logIndex,
+      };
+
+      if (!/^0x[a-f0-9]{64}$/i.test(t.txHash)) return;
+      setPoints((prev) => mergeTrades(prev, [t]));
+    };
+
+    const onConnectionState = (stateChange: any) => {
+      // If we ever reattach/reconnect, do a quick snapshot reconcile.
+      if (stateChange.current === "connected") {
+        pullSnapshot();
+      }
+    };
+
+    ably.connection.on(onConnectionState);
+    ch.subscribe("trade", onTrade);
+
+    return () => {
       try {
-        readProvider.off("block", onBlock);
+        ch.unsubscribe("trade", onTrade);
       } catch {
         // ignore
       }
+      try {
+        ably.connection.off(onConnectionState);
+      } catch {
+        // ignore
+      }
+      try {
+        ably.close();
+      } catch {
+        // ignore
+      }
+      ablyRef.current = null;
+      channelRef.current = null;
     };
-  }, [fetchTrades, readProvider, campaignAddress]);
+  }, [enabled, campaignAddress, chainId, pullSnapshot]);
 
   return { points, loading, error };
 }

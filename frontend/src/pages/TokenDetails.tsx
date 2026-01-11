@@ -11,19 +11,19 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import type { Transaction as CurveTrade } from "@/types/token";
 import twitterIcon from "@/assets/social/twitter.png";
 import { useLaunchpad } from "@/lib/launchpadClient";
 import type { CampaignInfo, CampaignMetrics, CampaignSummary } from "@/lib/launchpadClient";
 import { useDexScreenerChart } from "@/hooks/useDexScreenerChart";
 import { useBnbUsdPrice } from "@/hooks/useBnbUsdPrice";
+import { useTokenStatsRealtime } from "@/hooks/useTokenStatsRealtime";
 import { CurvePriceChart } from "@/components/token/CurvePriceChart";
 import { USE_MOCK_DATA } from "@/config/mockConfig";
 import { getMockCurveEventsForSymbol } from "@/constants/mockCurveTrades";
 import { getMockDexTradesForSymbol } from "@/constants/mockDexTrades";
 import { getMockDexLiquidityBnbForSymbol } from "@/constants/mockDexTrades";
 import { useWallet } from "@/hooks/useWallet";
-import { useCurveTrades } from "@/hooks/useCurveTrades";
+import { useCurveTrades, type CurveTradePoint } from "@/hooks/useCurveTrades";
 import { Contract, ethers } from "ethers";
 import LaunchCampaignArtifact from "@/abi/LaunchCampaign.json";
 import LaunchTokenArtifact from "@/abi/LaunchToken.json";
@@ -289,7 +289,14 @@ const TokenDetails = () => {
   // Read curve trades for transactions + analytics (live mode)
   // Hook returns CurveTrade[] (your "@/types/token" Transaction type)
   const { points: liveCurvePoints } = useCurveTrades(campaign?.campaign);
-  const liveCurvePointsSafe: CurveTrade[] = Array.isArray(liveCurvePoints) ? (liveCurvePoints as CurveTrade[]) : [];
+const liveCurvePointsSafe: CurveTradePoint[] = Array.isArray(liveCurvePoints) ? liveCurvePoints : [];
+
+  // Realtime stats from Railway (price/marketcap/24h vol), patched via Ably.
+  const { stats: rtStats } = useTokenStatsRealtime(
+    campaign?.campaign ?? campaignAddress,
+    wallet.chainId,
+    !USE_MOCK_DATA
+  );
 
   type TimeframeKey = "5m" | "1h" | "4h" | "24h";
   const timeframeTiles = useMemo(() => {
@@ -301,10 +308,10 @@ const TokenDetails = () => {
       "24h": 24 * 60 * 60,
     };
 
-    // End price: prefer current on-chain price, otherwise use latest trade price
-    const endPrice = metrics?.currentPrice
-      ? Number(ethers.formatUnits(metrics.currentPrice, 18))
-      : undefined;
+    // End price: prefer realtime last trade price, else on-chain price, else latest trade price
+    const endPrice =
+      (rtStats?.lastPriceBnb != null ? Number(rtStats.lastPriceBnb) : undefined) ??
+      (metrics?.currentPrice ? Number(ethers.formatUnits(metrics.currentPrice, 18)) : undefined);
 
     // Normalize mock timestamps so they sit “around now” for realistic windows.
     const mockCurve = getMockCurveEventsForSymbol(campaign?.symbol);
@@ -402,6 +409,9 @@ const TokenDetails = () => {
     const name = campaign?.name ?? "Token";
     const stats = summary?.stats;
 
+    const rtMarketCap = rtStats?.marketcapBnb;
+    const rtPrice = rtStats?.lastPriceBnb;
+
     return {
       image: campaign?.logoURI || "/placeholder.svg",
       ticker,
@@ -410,16 +420,22 @@ const TokenDetails = () => {
       hasTwitter: Boolean(campaign?.xAccount && campaign.xAccount.length > 0),
 
       // Unified headline stats
-      marketCap: stats?.marketCap ?? "—",
+      marketCap:
+        rtMarketCap != null && Number.isFinite(rtMarketCap)
+          ? `${formatCompact(rtMarketCap)} BNB`
+          : stats?.marketCap ?? "—",
       volume: stats?.volume ?? "—",
       holders: stats?.holders ?? "—",
-      price: formatPriceFromWei(metrics?.currentPrice ?? null),
+      price:
+        rtPrice != null && Number.isFinite(rtPrice)
+          ? formatPriceBnb(rtPrice)
+          : formatPriceFromWei(metrics?.currentPrice ?? null),
       liquidity: formatBnbFromWei(curveReserveWei),
 
       // Timeframe analytics (BNB volume + price change)
       metrics: timeframeTiles,
     };
-  }, [campaign, curveReserveWei, metrics, summary, timeframeTiles]);
+  }, [campaign, curveReserveWei, metrics, summary, timeframeTiles, rtStats]);
   const { price: bnbUsdPrice, loading: bnbUsdLoading } = useBnbUsdPrice(
     displayDenom === "USD"
   );
@@ -574,7 +590,7 @@ const TokenDetails = () => {
         return (`0x${base.repeat(8)}`).slice(0, 66);
       };
 
-      const mcap = summary?.stats.marketCap ?? "—";
+      const mcap = tokenData.marketCap ?? "—";
 
       // MOCK: Graduated -> mock DEX trades
       if (graduated) {
@@ -680,7 +696,7 @@ const TokenDetails = () => {
     }
 
     // LIVE MODE: useCurveTrades() points are CurveTrade objects (type/from/tokensWei/nativeWei/pricePerToken/timestamp/txHash)
-    const mcap = summary?.stats.marketCap ?? "—";
+    const mcap = tokenData.marketCap ?? "—";
 
     const next: TxRow[] = [...liveCurvePointsSafe]
       .slice(-50)
@@ -706,7 +722,7 @@ const TokenDetails = () => {
       });
 
     setTxs(next);
-  }, [USE_MOCK_DATA, campaign, liveCurvePointsSafe, summary?.stats.marketCap, metrics]);
+  }, [USE_MOCK_DATA, campaign, liveCurvePointsSafe, tokenData.marketCap, metrics]);
 
   // 🔹 Dexscreener chart-only URL (mock or live) based on the token contract
   // In mock mode we still want to be able to test the internal bonding-curve chart.
