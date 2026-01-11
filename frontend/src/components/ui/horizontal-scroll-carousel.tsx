@@ -191,11 +191,12 @@ const Example = () => {
             const tokenAddress = String((c as any).token ?? "").trim();
 
             // Prefer token address for copy, fallback campaign
-            const contractAddress = (tokenAddress && isAddress(tokenAddress))
-              ? tokenAddress
-              : (campaignAddress && isAddress(campaignAddress))
-              ? campaignAddress
-              : ZERO_ADDR;
+            const contractAddress =
+              tokenAddress && isAddress(tokenAddress)
+                ? tokenAddress
+                : campaignAddress && isAddress(campaignAddress)
+                ? campaignAddress
+                : ZERO_ADDR;
 
             return {
               id: Number((c as any).id ?? i + 1),
@@ -297,6 +298,28 @@ const Example = () => {
     if (!container) return;
     if (!displayCards.length) return;
 
+    // ---- Helpers for wheel infinite scroll (desktop) ----
+    const getWheelDelta = (evt: WheelEvent, el: HTMLDivElement) => {
+      // deltaMode: 0=pixels, 1=lines, 2=pages
+      if (evt.deltaMode === 1) return evt.deltaY * 16;
+      if (evt.deltaMode === 2) return evt.deltaY * el.clientHeight;
+      return evt.deltaY;
+    };
+
+    const wrapIntoMiddleBand = (pos: number, W: number) => {
+      const total = W * 3;
+      if (!W || !Number.isFinite(pos)) return 0;
+
+      // modulo into [0, total)
+      let p = ((pos % total) + total) % total;
+
+      // keep in middle region [0.5W, 2.5W)
+      if (p < W * 0.5) p += W;
+      else if (p >= W * 2.5) p -= W;
+
+      return p;
+    };
+
     const snapToNearestCard = (overrides?: { cardWidth?: number; totalCardWidth?: number }) => {
       if (!displayCards.length) return;
 
@@ -312,20 +335,21 @@ const Example = () => {
         const viewportCenter = currentPos + containerWidth / 2;
         const fIndex = (viewportCenter - cw / 2) / tw;
         let baseIndex = Math.round(fIndex);
+
         if (lastDeltaRef.current > 0 && baseIndex * tw + cw / 2 < viewportCenter) {
           baseIndex += 1;
-        } else if (
-          lastDeltaRef.current < 0 &&
-          baseIndex * tw + cw / 2 > viewportCenter
-        ) {
+        } else if (lastDeltaRef.current < 0 && baseIndex * tw + cw / 2 > viewportCenter) {
           baseIndex -= 1;
         }
+
         const cardCenter = baseIndex * tw + cw / 2;
         const rawTarget = cardCenter - containerWidth / 2;
         const W = singleSetWidth;
+
         const candidateShifts = [-2, -1, 0, 1, 2];
         let best = rawTarget,
           bestDist = Number.POSITIVE_INFINITY;
+
         for (const k of candidateShifts) {
           let c = rawTarget + k * W;
           if (c < W) c += W;
@@ -343,49 +367,26 @@ const Example = () => {
       setTimeout(() => setIsSnapping(false), 600);
     };
 
+    // ---- FIXED: infinite scroll both directions on desktop wheel ----
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
-      lastDeltaRef.current = e.deltaY;
+
+      const delta = getWheelDelta(e, container);
+      lastDeltaRef.current = delta;
 
       // Cancel ongoing snap
       if (isSnapping) setIsSnapping(false);
 
       if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
 
-      const singleSetWidth = TOTAL_CARD_WIDTH * displayCards.length;
+      setScrollPosition((prev) => {
+        const W = TOTAL_CARD_WIDTH * displayCards.length;
+        if (!W) return prev;
 
-      const normalizeWheelDelta = (evt: WheelEvent, containerEl: HTMLDivElement) => {
-  // deltaMode: 0=pixels, 1=lines, 2=pages
-  const base =
-    evt.deltaMode === 1 ? evt.deltaY * 16 :
-    evt.deltaMode === 2 ? evt.deltaY * containerEl.clientHeight :
-    evt.deltaY;
-
-  return base;
-};
-
-const wrapIntoMiddleBand = (pos: number, W: number) => {
-  const total = W * 3;
-  if (!W || !Number.isFinite(pos)) return 0;
-
-  // True modulo into [0, total)
-  let p = ((pos % total) + total) % total;
-
-  // Keep in the “middle” region [0.5W, 2.5W)
-  if (p < W * 0.5) p += W;
-  else if (p >= W * 2.5) p -= W;
-
-  return p;
-};
-
-// Smooth scroll with correct wrap
-setScrollPosition((prev) => {
-  const W = TOTAL_CARD_WIDTH * displayCards.length;
-  if (!W) return prev;
-
-  const delta = normalizeWheelDelta(e, container) * 0.6;
-  return wrapIntoMiddleBand(prev + delta, W);
-});
+        // speed factor
+        const next = prev + delta * 0.6;
+        return wrapIntoMiddleBand(next, W);
+      });
 
       // Snap after user stops scrolling
       scrollTimeoutRef.current = setTimeout(() => snapToNearestCard(), 150);
@@ -479,13 +480,21 @@ setScrollPosition((prev) => {
 
     setScrollPosition((currentPos) => {
       // Pick the nearest equivalent target by shifting by +/- W and +/- 2W
-      const candidates = [rawTarget - 2 * W, rawTarget - W, rawTarget, rawTarget + W, rawTarget + 2 * W];
+      const candidates = [
+        rawTarget - 2 * W,
+        rawTarget - W,
+        rawTarget,
+        rawTarget + W,
+        rawTarget + 2 * W,
+      ];
       let best = candidates[0];
       let bestDist = Infinity;
+
       for (let c of candidates) {
         let cn = c;
         if (cn < W) cn += W;
         else if (cn >= 2 * W) cn -= W;
+
         const d = Math.abs(cn - currentPos);
         if (d < bestDist) {
           best = cn;
@@ -518,9 +527,7 @@ setScrollPosition((prev) => {
         className="flex items-center"
         style={{
           transform: `translateX(-${scrollPosition}px)`,
-          transition: isSnapping
-            ? "transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)"
-            : "none",
+          transition: isSnapping ? "transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)" : "none",
           gap: `${CARD_GAP}px`,
         }}
       >
@@ -616,22 +623,15 @@ const CardView = ({
       <div
         className={`relative rounded-[1.25rem] p-[1px] ${
           isCentered
-            //? "ring-2 ring-accent/60 shadow-xl shadow-accent/10"
-            //: "border border-border/40"
+            ? ""
+            : ""
         }`}
         style={{
           height: `${cardWidth}px`,
           width: `${cardWidth}px`,
         }}
       >
-        <GlowingEffect
-          spread={32}
-          glow={false}
-          disabled={false}
-          proximity={80}
-          inactiveZone={0.01}
-          borderWidth={2}
-        />
+        <GlowingEffect spread={32} glow={false} disabled={false} proximity={80} inactiveZone={0.01} borderWidth={2} />
         <div className="relative flex h-full w-full flex-col overflow-hidden rounded-[1.15rem] border border-border/40 bg-card/80 backdrop-blur p-6 shadow-sm">
           {/* Top Section: Links and Stats */}
           <div className="flex items-start justify-between mb-4">
@@ -690,23 +690,15 @@ const CardView = ({
 
           {/* Token Info */}
           <div className="flex flex-col items-center gap-2 mb-4">
-            <h3 className="text-2xl font-retro tracking-tight text-foreground">
-              {card.ticker}
-            </h3>
+            <h3 className="text-2xl font-retro tracking-tight text-foreground">{card.ticker}</h3>
             <div className="flex items-center gap-2">
-              <span className="text-sm font-retro text-muted-foreground">
-                {card.tokenName}
-              </span>
+              <span className="text-sm font-retro text-muted-foreground">{card.tokenName}</span>
               <button
                 onClick={handleCopy}
                 className="p-1 hover:bg-muted rounded transition-colors"
                 title="Copy contract address"
               >
-                {copied ? (
-                  <Check className="h-3 w-3 text-accent" />
-                ) : (
-                  <Copy className="h-3 w-3 text-muted-foreground" />
-                )}
+                {copied ? <Check className="h-3 w-3 text-accent" /> : <Copy className="h-3 w-3 text-muted-foreground" />}
               </button>
             </div>
             <p className="text-[10px] font-retro text-muted-foreground text-center leading-relaxed line-clamp-2">
@@ -716,9 +708,7 @@ const CardView = ({
 
           {/* Bottom Right: Market Cap */}
           <div className="flex justify-end">
-            <span className="text-xs font-retro text-accent">
-              MC {card.marketCap}
-            </span>
+            <span className="text-xs font-retro text-accent">MC {card.marketCap}</span>
           </div>
         </div>
       </div>
