@@ -23,6 +23,31 @@ function safeError(e) {
   };
 }
 
+function b64urlToUtf8(input) {
+  const s = String(input || "").replace(/-/g, "+").replace(/_/g, "/");
+  const pad = s.length % 4 ? "=".repeat(4 - (s.length % 4)) : "";
+  return Buffer.from(s + pad, "base64").toString("utf8");
+}
+
+function decodeJwtUnsafe(token) {
+  try {
+    const parts = String(token || "").split(".");
+    if (parts.length < 2) return { looksJwt: false };
+    const payload = JSON.parse(b64urlToUtf8(parts[1]));
+    const issHost = payload?.iss ? (() => { try { return new URL(payload.iss).host; } catch { return null; } })() : null;
+    return {
+      looksJwt: true,
+      role: payload?.role || payload?.user_role || null,
+      iss: payload?.iss || null,
+      issHost,
+      exp: payload?.exp || null,
+      iat: payload?.iat || null,
+    };
+  } catch {
+    return { looksJwt: false };
+  }
+}
+
 function getRepoAivenCaInfo() {
   try {
     const __filename = fileURLToPath(import.meta.url);
@@ -220,17 +245,28 @@ async function checkSupabaseServiceRole() {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
   const bucket = process.env.SUPABASE_BUCKET || "UPMEME";
 
+  const supaHost = (() => { try { return new URL(baseUrl).host; } catch { return null; } })();
+  const jwt = decodeJwtUnsafe(key);
+  const issuerMismatch = Boolean(jwt.looksJwt && jwt.issHost && supaHost && jwt.issHost !== supaHost);
+
+  const jwtInfo = {
+    looksJwt: jwt.looksJwt,
+    role: jwt.role,
+    issHost: jwt.issHost,
+    supabaseHost: supaHost,
+    issuerMismatch,
+  };
+
   if (!baseUrl || !key) {
     return {
       ok: false,
       skipped: true,
       error: { message: "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY (required for /api/upload)" },
       bucket,
+      jwt: jwtInfo,
     };
   }
 
-  // Supabase Storage API: list buckets
-  // GET {SUPABASE_URL}/storage/v1/bucket
   const url = baseUrl.replace(/\/+$/, "") + "/storage/v1/bucket";
 
   try {
@@ -238,7 +274,6 @@ async function checkSupabaseServiceRole() {
     const r = await fetch(url, {
       method: "GET",
       headers: {
-        // Storage API accepts either Authorization Bearer or apikey (service_role works)
         Authorization: `Bearer ${key}`,
         apikey: key,
       },
@@ -261,10 +296,10 @@ async function checkSupabaseServiceRole() {
         },
         bucket,
         url,
+        jwt: jwtInfo,              // <-- add here (failure path)
       };
     }
 
-    // Response is an array of buckets
     const buckets = Array.isArray(json) ? json : [];
     const bucketExists = buckets.some((b) => b?.name === bucket);
 
@@ -274,11 +309,19 @@ async function checkSupabaseServiceRole() {
       httpStatus: r.status,
       url,
       bucket: { name: bucket, exists: bucketExists, total: buckets.length },
+      jwt: jwtInfo,                // <-- add here (success path)
     };
   } catch (e) {
-    return { ok: false, error: safeError(e), bucket, url };
+    return {
+      ok: false,
+      error: safeError(e),
+      bucket,
+      url,
+      jwt: jwtInfo,                // <-- optional but recommended
+    };
   }
 }
+
 
 async function checkAblyServerKey() {
   // Ably server key must NOT be exposed to browser; check server-side env only
@@ -347,6 +390,18 @@ out.checks.railway = await checkRailway();
 out.checks.supabase = await checkSupabasePublic();
 
 out.checks.supabase_service_role = await checkSupabaseServiceRole();
+
+const sr = out.checks.supabase_service_role;
+if (sr && sr.jwt?.issuerMismatch) {
+  out.recommendations.push(
+    "SUPABASE_SERVICE_ROLE_KEY issuer does not match SUPABASE_URL host. You likely pasted a key from a different Supabase project. Copy the service_role key from the SAME project as SUPABASE_URL."
+  );
+}
+if (sr && sr.jwt?.looksJwt && sr.jwt?.role && String(sr.jwt.role).toLowerCase() !== "service_role") {
+  out.recommendations.push(
+    "SUPABASE_SERVICE_ROLE_KEY JWT role is not service_role. Ensure you copied the service_role key (not anon) from Supabase Settings → API."
+  );
+}
 
 if (!out.checks.supabase_service_role?.ok) {
   out.recommendations.push(
