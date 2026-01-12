@@ -39,8 +39,8 @@ export default async function handler(req, res) {
     td { word-break: break-word; }
 .v, .mono { white-space: normal; }
     .wrap{
-  max-width: min(1600px, calc(100vw - 32px));
-  margin: 28px auto;
+  max-width: min(1900px, calc(100vw - 32px));
+  margin: 24px auto;
   padding: 0 16px;
 }
     header{ display:flex; gap:16px; align-items:flex-start; justify-content:space-between; margin-bottom:18px; }
@@ -67,10 +67,41 @@ export default async function handler(req, res) {
     .card h2{ margin:0; padding:14px 14px 0 14px; font-size:14px; color:var(--muted); font-weight:600; letter-spacing:.3px; text-transform:uppercase; }
     .card .body{ padding:14px; }
 
-    table{ width:100%; border-collapse:collapse; font-size:13px; }
-    td, th{ padding:10px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
-    th{ color:var(--muted); font-weight:600; text-align:left; background:rgba(0,0,0,.12); }
-    tr:last-child td{ border-bottom:none; }
+    table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:13px;
+
+  /* NEW: keep columns stable and prevent the “Status” column from collapsing */
+  table-layout: fixed;
+}
+
+th, td{
+  padding:10px 10px;
+  border-bottom:1px solid var(--line);
+  vertical-align:top;
+
+  /* NEW: allow long text/URLs/JSON to wrap instead of exploding the layout */
+  word-break: break-word;
+}
+
+th{
+  color:var(--muted);
+  font-weight:600;
+  text-align:left;
+  background:rgba(0,0,0,.12);
+}
+
+tr:last-child td{ border-bottom:none; }
+
+/* NEW: fixed 3-column widths for all 3-column tables */
+th:nth-child(1), td:nth-child(1){ width:28%; }
+th:nth-child(2), td:nth-child(2){ width:16%; }
+th:nth-child(3), td:nth-child(3){ width:56%; }
+
+/* Keep your existing semantics */
+.k{ color:var(--muted); }          /* removed width:44% */
+.v{ font-family:var(--mono); }
     .k{ color:var(--muted); width:44%; }
     .v{ font-family:var(--mono); }
     .badge{ display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px; font-size:12px; font-weight:600;
