@@ -216,11 +216,11 @@ async function checkSupabasePublic() {
 }
 
 async function checkSupabaseServiceRole() {
-  const url = process.env.SUPABASE_URL || "";
+  const baseUrl = process.env.SUPABASE_URL || "";
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-  const bucket = process.env.SUPABASE_BUCKET || "upmeme";
+  const bucket = process.env.SUPABASE_BUCKET || "UPMEME";
 
-  if (!url || !key) {
+  if (!baseUrl || !key) {
     return {
       ok: false,
       skipped: true,
@@ -229,26 +229,54 @@ async function checkSupabaseServiceRole() {
     };
   }
 
-  try {
-    const { createClient } = await import("@supabase/supabase-js");
-    const supabase = createClient(url, key, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
+  // Supabase Storage API: list buckets
+  // GET {SUPABASE_URL}/storage/v1/bucket
+  const url = baseUrl.replace(/\/+$/, "") + "/storage/v1/bucket";
 
+  try {
     const t0 = Date.now();
-    const { data, error } = await supabase.storage.listBuckets();
+    const r = await fetch(url, {
+      method: "GET",
+      headers: {
+        // Storage API accepts either Authorization Bearer or apikey (service_role works)
+        Authorization: `Bearer ${key}`,
+        apikey: key,
+      },
+      cache: "no-store",
+    });
     const latencyMs = Date.now() - t0;
 
-    if (error) return { ok: false, latencyMs, error: safeError(error), bucket };
+    const text = await r.text();
+    let json = null;
+    try { json = JSON.parse(text); } catch {}
 
-    const bucketExists = Array.isArray(data) && data.some((b) => b?.name === bucket);
+    if (!r.ok) {
+      return {
+        ok: false,
+        latencyMs,
+        httpStatus: r.status,
+        error: {
+          message: "Supabase Storage API request failed",
+          detail: json || text.slice(0, 400),
+        },
+        bucket,
+        url,
+      };
+    }
+
+    // Response is an array of buckets
+    const buckets = Array.isArray(json) ? json : [];
+    const bucketExists = buckets.some((b) => b?.name === bucket);
+
     return {
       ok: true,
       latencyMs,
-      bucket: { name: bucket, exists: bucketExists, total: data?.length ?? 0 },
+      httpStatus: r.status,
+      url,
+      bucket: { name: bucket, exists: bucketExists, total: buckets.length },
     };
   } catch (e) {
-    return { ok: false, error: safeError(e), bucket };
+    return { ok: false, error: safeError(e), bucket, url };
   }
 }
 
