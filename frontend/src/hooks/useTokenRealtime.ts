@@ -77,10 +77,9 @@ export function useTokenRealtime(chainId: number, campaign: string) {
     if (!API_BASE || !campaign) return;
 
     const client = new Ably.Realtime({
-      key: import.meta.env.VITE_ABLY_CLIENT_KEY,
-      authUrl: `${API_BASE}/api/ably/token?chainId=${chainId}&campaign=${campaign.toLowerCase()}`,
-      authMethod: "GET"
-    });
+  authUrl: `/api/ably/token?chainId=${chainId}&campaign=${campaign.toLowerCase()}`,
+  authMethod: "GET",
+});
 
     const chName = tokenChannel(chainId, campaign);
     const channel = client.channels.get(chName);

@@ -3,7 +3,6 @@ import Ably from "ably";
 import { getActiveChainId, type SupportedChainId } from "@/lib/chainConfig";
 
 const API_BASE = String(import.meta.env.VITE_REALTIME_API_BASE || "").replace(/\/$/, "");
-const ABLY_KEY_NAME = String(import.meta.env.VITE_ABLY_CLIENT_KEY || "").trim();
 
 export type TokenStatsRealtime = {
   lastPriceBnb: number | null;
@@ -94,16 +93,14 @@ export function useTokenStatsRealtime(campaignAddress?: string, chainId?: number
   useEffect(() => {
     if (!enabled || !campaignAddress) return;
     if (!API_BASE) return;
-    if (!ABLY_KEY_NAME) return;
-
-    const authUrl = `${API_BASE}/api/ably/token?chainId=${cid}&campaign=${campaignAddress.toLowerCase()}`;
-    const ably = new Ably.Realtime({ key: ABLY_KEY_NAME, authUrl, authMethod: "GET" });
+    const authUrl = `/api/ably/token?chainId=${cid}&campaign=${campaignAddress.toLowerCase()}`;
+const ably = new Ably.Realtime({ authUrl, authMethod: "GET" });
     ablyRef.current = ably;
 
     const chName = `token:${cid}:${campaignAddress.toLowerCase()}`;
     const ch = ably.channels.get(chName);
 
-    const onStats = (msg: Ably.Types.Message) => {
+    const onStats = (msg: any) => {
       const data: any = msg.data;
       if (!data) return;
       if ((msg.name || "") !== "stats_patch" && String(data.type || "") !== "stats_patch") return;
@@ -120,7 +117,7 @@ export function useTokenStatsRealtime(campaignAddress?: string, chainId?: number
       });
     };
 
-    const onConnected = (c: Ably.Types.ConnectionStateChange) => {
+    const onConnected = (c: any) => {
       if (c.current === "connected") pull();
     };
 

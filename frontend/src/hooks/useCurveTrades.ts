@@ -5,9 +5,8 @@ import { getActiveChainId, type SupportedChainId } from "@/lib/chainConfig";
 
 // Realtime-indexer HTTP base (Railway). Example: https://upmeme-production.up.railway.app
 const API_BASE = String(import.meta.env.VITE_REALTIME_API_BASE || "").replace(/\/$/, "");
-const ABLY_KEY_NAME = String(import.meta.env.VITE_ABLY_CLIENT_KEY || "").trim();
 
-type RealtimeChannel = ReturnType<Ably.Realtime["channels"]["get"]>;
+type RealtimeChannel = any;
 
 export type CurveTradePoint = {
   type: "buy" | "sell";
@@ -199,93 +198,76 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
   }, [enabled, campaignAddress, chainId, pullSnapshot, reconcileMs]);
 
   // Ably realtime stream (trade events)
-  useEffect(() => {
-    if (!enabled || !campaignAddress) return;
-    if (!API_BASE) return;
-    if (!ABLY_KEY_NAME) {
-      // Not fatal: snapshots still work
+useEffect(() => {
+  if (!enabled || !campaignAddress) return;
+
+  // Clean up any previous instances (safety)
+  try {
+    if (channelRef.current) {
+      channelRef.current.unsubscribe();
+      channelRef.current = null;
+    }
+    if (ablyRef.current) {
+      ablyRef.current.close();
+      ablyRef.current = null;
+    }
+  } catch {
+    // ignore
+  }
+
+  const campaign = campaignAddress.toLowerCase();
+  const authUrl = `/api/ably/token?chainId=${chainId}&campaign=${campaign}`;
+
+  const ably = new Ably.Realtime({
+    authUrl,
+    authMethod: "GET",
+    recover: (last, cb) => cb(true),
+  });
+
+  ablyRef.current = ably;
+
+  const channelName = `token:${chainId}:${campaign}`;
+  const channel = ably.channels.get(channelName);
+  channelRef.current = channel;
+
+  const onTrade = (msg: any) => {
+    // Expect either a single trade object or an array of trades
+    const data = msg?.data;
+
+    if (Array.isArray(data)) {
+      applySnapshot(data);
       return;
     }
 
-    const authUrl = `${API_BASE}/api/ably/token?chainId=${chainId}&campaign=${campaignAddress.toLowerCase()}`;
-    const ably = new Ably.Realtime({
-      key: ABLY_KEY_NAME,
-      authUrl,
-      authMethod: "GET",
-      // Ably uses its own backoff internally; keep a conservative retry
-      recover: (last, cb) => cb(true),
-    });
+    if (data && typeof data === "object") {
+      applySnapshot([data]);
+      return;
+    }
 
-    ablyRef.current = ably;
-    const channelName = `token:${chainId}:${campaignAddress.toLowerCase()}`;
-    const ch = ably.channels.get(channelName);
-    channelRef.current = ch;
+    // ignore malformed payloads
+  };
 
-    const onTrade = (msg: any) => {
-      const data: any = msg.data;
-      if (!data) return;
-      if ((msg.name || "") !== "trade" && String(data.type || "") !== "trade") return;
+  // Subscribe to trade events (ensure your indexer publishes with name "trade")
+  channel.subscribe("trade", onTrade);
 
-      const side = String(data.side || data.type || "").toLowerCase() === "sell" ? "sell" : "buy";
-      const txHash = String(data.txHash || data.tx_hash || "");
-      const logIndex = Number(data.logIndex ?? data.log_index ?? 0);
-      const blockNumber = Number(data.blockNumber ?? data.block_number ?? 0);
-      const ts = Number(data.timestamp ?? 0);
+  return () => {
+    try {
+      channel.unsubscribe("trade", onTrade);
+      ably.channels.release(channelName);
+    } catch {
+      // ignore
+    }
+    try {
+      ably.close();
+    } catch {
+      // ignore
+    }
 
-      const tokensWei = toBigIntWei(data.tokenAmount ?? data.token_amount ?? data.tokensWei, "token");
-      const nativeWei = toBigIntWei(data.bnbAmount ?? data.bnb_amount ?? data.nativeWei, "ether");
+    channelRef.current = null;
+    ablyRef.current = null;
+  };
+}, [enabled, campaignAddress, chainId, applySnapshot]);
 
-      const tokens = Number(ethers.formatUnits(tokensWei, 18));
-      const bnb = Number(ethers.formatEther(nativeWei));
-      const pricePerToken = toNumber(data.priceBnb ?? data.price_bnb ?? data.pricePerToken) || (tokens > 0 ? bnb / tokens : 0);
-
-      const t: CurveTradePoint = {
-        type: side,
-        from: String(data.wallet || data.trader || data.from || "").toLowerCase(),
-        to: String(campaignAddress).toLowerCase(),
-        tokensWei,
-        nativeWei,
-        pricePerToken,
-        timestamp: Number.isFinite(ts) ? ts : 0,
-        txHash,
-        blockNumber,
-        logIndex,
-      };
-
-      if (!/^0x[a-f0-9]{64}$/i.test(t.txHash)) return;
-      setPoints((prev) => mergeTrades(prev, [t]));
-    };
-
-    const onConnectionState = (stateChange: any) => {
-      // If we ever reattach/reconnect, do a quick snapshot reconcile.
-      if (stateChange.current === "connected") {
-        pullSnapshot();
-      }
-    };
-
-    ably.connection.on(onConnectionState);
-    ch.subscribe("trade", onTrade);
-
-    return () => {
-      try {
-        ch.unsubscribe("trade", onTrade);
-      } catch {
-        // ignore
-      }
-      try {
-        ably.connection.off(onConnectionState);
-      } catch {
-        // ignore
-      }
-      try {
-        ably.close();
-      } catch {
-        // ignore
-      }
-      ablyRef.current = null;
-      channelRef.current = null;
-    };
-  }, [enabled, campaignAddress, chainId, pullSnapshot]);
 
   return { points, loading, error };
 }
