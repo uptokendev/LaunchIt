@@ -5,25 +5,141 @@ import { LAUNCH_FACTORY_ABI, LAUNCH_CAMPAIGN_ABI } from "./abis.js";
 import { TIMEFRAMES, bucketStart, TF } from "./timeframes.js";
 import { publishTrade, publishCandle, publishStats } from "./ably.js";
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function toDec18(x: bigint): number {
+  return Number(ethers.formatUnits(x, 18));
+}
+
+function parseRpcList(v: string): string[] {
+  return String(v || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function isRateLimitError(e: any): boolean {
+  const msg = String(e?.shortMessage || e?.message || "").toLowerCase();
+  if (msg.includes("rate limit")) return true;
+
+  // ethers v6 BAD_DATA wrapping JSON-RPC batch errors
+  const v = e?.value;
+  if (Array.isArray(v) && v[0]?.error?.code === -32005) return true;
+  const infoV = e?.info?.value;
+  if (Array.isArray(infoV) && infoV[0]?.error?.code === -32005) return true;
+  const inner = e?.error;
+  if (inner?.code === -32005) return true;
+  return false;
+}
+
+function isPrunedHistoryError(e: any): boolean {
+  // Seen on some providers (e.g., Allnodes) for old eth_getLogs ranges
+  const code = e?.error?.code ?? e?.code;
+  if (code === -32701) return true;
+  const msg = String(e?.shortMessage || e?.message || e?.error?.message || "").toLowerCase();
+  if (msg.includes("history has been pruned")) return true;
+  if (msg.includes("pruned")) return true;
+  return false;
+}
+
+function isRpcTransportError(e: any): boolean {
+  const msg = String(e?.shortMessage || e?.message || "").toLowerCase();
+
+  // Common transient gateway/network failures from public RPCs
+  if (msg.includes("service unavailable") || msg.includes("503")) return true;
+  if (msg.includes("bad gateway") || msg.includes("502")) return true;
+  if (msg.includes("gateway timeout") || msg.includes("504")) return true;
+  if (msg.includes("overflow")) return true;
+
+  // TLS/connection problems (Railway/Node networking)
+  if (msg.includes("handshake failure")) return true;
+  if (msg.includes("eproto")) return true;
+  if (msg.includes("econnreset") || msg.includes("connection reset")) return true;
+  if (msg.includes("etimedout") || msg.includes("timeout")) return true;
+
+  // Ethers sometimes nests these
+  const code = String(e?.code || "");
+  if (code === "SERVER_ERROR") return true;
+
+  return false;
+}
+
+async function getLogsSafe(provider: ethers.JsonRpcProvider, filter: any, depth = 0): Promise<ethers.Log[]> {
+  try {
+    return await provider.getLogs(filter);
+  } catch (e: any) {
+    // Pruned history should not be retried on the SAME provider.
+    if (isPrunedHistoryError(e)) throw e;
+
+    if (!isRateLimitError(e)) throw e;
+
+    const from = typeof filter?.fromBlock === "number" ? filter.fromBlock : null;
+    const to = typeof filter?.toBlock === "number" ? filter.toBlock : null;
+
+    // If the range is large, split it (dramatically reduces eth_getLogs load on public RPCs)
+    if (from !== null && to !== null) {
+      const span = to - from + 1;
+      if (span > ENV.MIN_LOG_CHUNK_SIZE && depth < 12) {
+        const mid = Math.floor((from + to) / 2);
+        const left = await getLogsSafe(provider, { ...filter, fromBlock: from, toBlock: mid }, depth + 1);
+        const right = await getLogsSafe(provider, { ...filter, fromBlock: mid + 1, toBlock: to }, depth + 1);
+        return left.concat(right);
+      }
+    }
+
+    // Otherwise, backoff + retry a few times
+    let delay = 750;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      await sleep(delay + Math.floor(Math.random() * 250));
+      try {
+        return await provider.getLogs(filter);
+      } catch (e2: any) {
+        if (isPrunedHistoryError(e2)) throw e2;
+        if (!isRateLimitError(e2)) throw e2;
+      }
+      delay = Math.min(15_000, delay * 2);
+    }
+
+    throw e;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Chain config
+// ---------------------------------------------------------------------------
+
 type ChainCfg = {
   chainId: number;
-  rpcHttp: string;
+  rpcHttp: string; // comma-separated list
   factoryAddress?: string;
+  factoryStartBlock?: number;
 };
 
 const CHAINS: ChainCfg[] = [
   {
     chainId: 97,
     rpcHttp: ENV.BSC_RPC_HTTP_97,
-    factoryAddress: ENV.FACTORY_ADDRESS_97 || undefined
+    factoryAddress: ENV.FACTORY_ADDRESS_97 || undefined,
+    factoryStartBlock: ENV.FACTORY_START_BLOCK_97 || undefined
   }
   // enable later:
-  // { chainId: 56, rpcHttp: ENV.BSC_RPC_HTTP_56, factoryAddress: ENV.FACTORY_ADDRESS_56 || undefined },
+  // {
+  //   chainId: 56,
+  //   rpcHttp: ENV.BSC_RPC_HTTP_56,
+  //   factoryAddress: ENV.FACTORY_ADDRESS_56 || undefined,
+  //   factoryStartBlock: ENV.FACTORY_START_BLOCK_56 || undefined
+  // }
 ];
 
-function toDec18(x: bigint): number {
-  return Number(ethers.formatUnits(x, 18));
-}
+// ---------------------------------------------------------------------------
+// DB state
+// ---------------------------------------------------------------------------
 
 async function getState(chainId: number, cursor: string): Promise<number> {
   const r = await pool.query(
@@ -34,26 +150,52 @@ async function getState(chainId: number, cursor: string): Promise<number> {
   return Number(r.rows[0].last_indexed_block);
 }
 
-async function setState(chainId: number, cursor: string, block: number) {
+async function setStateMax(chainId: number, cursor: string, nextBlock: number) {
+  // Do NOT allow the state to move backwards (repair jobs may scan earlier windows)
   await pool.query(
     `insert into public.indexer_state(chain_id,cursor,last_indexed_block)
      values($1,$2,$3)
      on conflict (chain_id,cursor) do update
-       set last_indexed_block=excluded.last_indexed_block,
+       set last_indexed_block = greatest(public.indexer_state.last_indexed_block, excluded.last_indexed_block),
            updated_at=now()`,
-    [chainId, cursor, block]
+    [chainId, cursor, nextBlock]
   );
 }
 
-async function upsertCampaign(chainId: number, campaign: string, token: string, createdBlock: number) {
+async function upsertCampaign(
+  chainId: number,
+  campaign: string,
+  token: string,
+  creator: string,
+  name: string,
+  symbol: string,
+  createdBlock: number
+) {
+  // NOTE: campaigns lives in the *indexer* DB.
+  // It is used for discovery + scanning and is separate from user-profile tables.
+  // Current schema expects creator_address to be NOT NULL.
   await pool.query(
-    `insert into public.campaigns(chain_id,campaign_address,token_address,created_block,is_active)
-     values($1,$2,$3,$4,true)
+    `insert into public.campaigns(
+        chain_id,campaign_address,token_address,creator_address,name,symbol,created_block,is_active
+     )
+     values($1,$2,$3,$4,$5,$6,$7,true)
      on conflict (chain_id,campaign_address) do update
        set token_address=coalesce(excluded.token_address, public.campaigns.token_address),
-           created_block=coalesce(excluded.created_block, public.campaigns.created_block),
+           creator_address=coalesce(excluded.creator_address, public.campaigns.creator_address),
+           name=coalesce(excluded.name, public.campaigns.name),
+           symbol=coalesce(excluded.symbol, public.campaigns.symbol),
+           created_block=least(public.campaigns.created_block, excluded.created_block),
+           is_active=true,
            updated_at=now()`,
-    [chainId, campaign.toLowerCase(), token.toLowerCase(), createdBlock]
+    [
+      chainId,
+      campaign.toLowerCase(),
+      token.toLowerCase(),
+      creator.toLowerCase(),
+      name,
+      symbol,
+      createdBlock
+    ]
   );
 }
 
@@ -198,7 +340,16 @@ async function patchStats(chainId: number, campaign: string) {
   });
 }
 
-async function scanFactory(provider: ethers.JsonRpcProvider, chain: ChainCfg) {
+// ---------------------------------------------------------------------------
+// On-chain scans
+// ---------------------------------------------------------------------------
+
+async function scanFactoryRange(
+  provider: ethers.JsonRpcProvider,
+  chain: ChainCfg,
+  fromBlock: number,
+  toBlock: number
+) {
   if (!chain.factoryAddress) return;
 
   const iface = new ethers.Interface(LAUNCH_FACTORY_ABI);
@@ -207,19 +358,12 @@ async function scanFactory(provider: ethers.JsonRpcProvider, chain: ChainCfg) {
   const topic0 = eventFrag.topicHash;
 
   const cursor = "factory";
-
-  const latest = await provider.getBlockNumber();
-  const target = Math.max(0, latest - ENV.CONFIRMATIONS);
-
-  let from = await getState(chain.chainId, cursor);
-  if (from === 0) from = Math.max(0, target - 50_000);
-
   const step = ENV.LOG_CHUNK_SIZE;
 
-  for (let start = from; start <= target; start += step) {
-    const end = Math.min(target, start + step - 1);
+  for (let start = fromBlock; start <= toBlock; start += step) {
+    const end = Math.min(toBlock, start + step - 1);
 
-    const logs = await provider.getLogs({
+    const logs = await getLogsSafe(provider, {
       address: chain.factoryAddress,
       fromBlock: start,
       toBlock: end,
@@ -228,18 +372,26 @@ async function scanFactory(provider: ethers.JsonRpcProvider, chain: ChainCfg) {
 
     for (const log of logs) {
       const parsed = iface.parseLog(log);
-      if (!parsed) continue; // guard for strict TS + safety
-
-      const campaign = String(parsed.args.campaign);
-      const token = String(parsed.args.token);
-      await upsertCampaign(chain.chainId, campaign, token, log.blockNumber);
+      if (!parsed) continue;
+      const campaign = String((parsed.args as any).campaign);
+      const token = String((parsed.args as any).token);
+      const creator = String((parsed.args as any).creator);
+      const name = String((parsed.args as any).name);
+      const symbol = String((parsed.args as any).symbol);
+      await upsertCampaign(chain.chainId, campaign, token, creator, name, symbol, log.blockNumber);
     }
 
-    await setState(chain.chainId, cursor, end + 1);
+    await setStateMax(chain.chainId, cursor, end + 1);
   }
 }
 
-async function scanCampaign(provider: ethers.JsonRpcProvider, chainId: number, campaign: string) {
+async function scanCampaignRange(
+  provider: ethers.JsonRpcProvider,
+  chainId: number,
+  campaign: string,
+  fromBlock: number,
+  toBlock: number
+) {
   const iface = new ethers.Interface(LAUNCH_CAMPAIGN_ABI);
 
   const buyFrag = iface.getEvent("TokensPurchased");
@@ -250,34 +402,20 @@ async function scanCampaign(provider: ethers.JsonRpcProvider, chainId: number, c
   const sellTopic = sellFrag.topicHash;
 
   const cursor = `campaign:${campaign.toLowerCase()}`;
-
-  const latest = await provider.getBlockNumber();
-  const target = Math.max(0, latest - ENV.CONFIRMATIONS);
-
-  let from = await getState(chainId, cursor);
-  if (from === 0) {
-    const r = await pool.query(
-      `select created_block from public.campaigns where chain_id=$1 and campaign_address=$2`,
-      [chainId, campaign.toLowerCase()]
-    );
-    const created = Number(r.rows[0]?.created_block || 0);
-    from = created > 0 ? created : Math.max(0, target - 50_000);
-  }
-
   const step = ENV.LOG_CHUNK_SIZE;
   const blockTimeCache = new Map<number, number>();
 
-  for (let start = from; start <= target; start += step) {
-    const end = Math.min(target, start + step - 1);
+  for (let start = fromBlock; start <= toBlock; start += step) {
+    const end = Math.min(toBlock, start + step - 1);
 
-    const logs = await provider.getLogs({
+    const logs = await getLogsSafe(provider, {
       address: campaign,
       fromBlock: start,
       toBlock: end,
       topics: [[buyTopic, sellTopic]]
     });
 
-    logs.sort((a, b) => (a.blockNumber - b.blockNumber) || ((a.index ?? 0) - (b.index ?? 0)));
+    logs.sort((a, b) => a.blockNumber - b.blockNumber || ((a.index ?? 0) - (b.index ?? 0)));
 
     for (const log of logs) {
       const txHash = log.transactionHash;
@@ -292,14 +430,13 @@ async function scanCampaign(provider: ethers.JsonRpcProvider, chainId: number, c
 
       const parsed = iface.parseLog(log);
       if (!parsed) continue;
-
       const name = parsed.name;
       const logIndex = log.index ?? 0;
 
       if (name === "TokensPurchased") {
-        const buyer = String(parsed.args.buyer);
-        const amountOut = parsed.args.amountOut as bigint;
-        const cost = parsed.args.cost as bigint;
+        const buyer = String((parsed.args as any).buyer);
+        const amountOut = (parsed.args as any).amountOut as bigint;
+        const cost = (parsed.args as any).cost as bigint;
 
         const { tokenAmount, bnbAmount, priceBnb } = await insertTrade({
           chainId,
@@ -336,9 +473,9 @@ async function scanCampaign(provider: ethers.JsonRpcProvider, chainId: number, c
           }
         }
       } else if (name === "TokensSold") {
-        const seller = String(parsed.args.seller);
-        const amountIn = parsed.args.amountIn as bigint;
-        const payout = parsed.args.payout as bigint;
+        const seller = String((parsed.args as any).seller);
+        const amountIn = (parsed.args as any).amountIn as bigint;
+        const payout = (parsed.args as any).payout as bigint;
 
         const { tokenAmount, bnbAmount, priceBnb } = await insertTrade({
           chainId,
@@ -377,23 +514,140 @@ async function scanCampaign(provider: ethers.JsonRpcProvider, chainId: number, c
       }
     }
 
-    await setState(chainId, cursor, end + 1);
-
-    if (logs.length > 0) {
-      await patchStats(chainId, campaign);
-    }
+    await setStateMax(chainId, cursor, end + 1);
+    if (logs.length > 0) await patchStats(chainId, campaign);
   }
 }
 
+function computeStartBlock(chain: ChainCfg, headTarget: number, existingState: number): number {
+  // Priority:
+  //  1) If state is already set, use it
+  //  2) Else use configured factoryStartBlock (if set)
+  //  3) Else fallback to headTarget - lookback
+  if (existingState > 0) return existingState;
+  if ((chain.factoryStartBlock ?? 0) > 0) return Number(chain.factoryStartBlock);
+  return Math.max(0, headTarget - ENV.FACTORY_LOOKBACK_BLOCKS);
+}
+
+// ---------------------------------------------------------------------------
+// Public entrypoints
+// ---------------------------------------------------------------------------
+
 export async function runIndexerOnce() {
+  await runIndexerCore({
+    mode: "normal",
+    lookbackBlocks: ENV.FACTORY_LOOKBACK_BLOCKS,
+    rewindBlocks: 0
+  });
+}
+
+// Runs a bounded repair window: rewinds per-cursor state and replays recent logs.
+export async function runRepairOnce() {
+  await runIndexerCore({
+    mode: "repair",
+    lookbackBlocks: ENV.REPAIR_LOOKBACK_BLOCKS,
+    rewindBlocks: ENV.REPAIR_REWIND_BLOCKS
+  });
+}
+
+async function runIndexerCore(opts: { mode: "normal" | "repair"; lookbackBlocks: number; rewindBlocks: number }) {
   for (const chain of CHAINS) {
-    const provider = new ethers.JsonRpcProvider(chain.rpcHttp);
+    const rpcList = parseRpcList(chain.rpcHttp);
+    if (rpcList.length === 0) {
+      console.error("No RPC URLs configured for chain", chain.chainId);
+      continue;
+    }
 
-    await scanFactory(provider, chain);
+    let rpcIdx = 0;
 
-    const campaigns = await listActiveCampaigns(chain.chainId);
-    for (const c of campaigns) {
-      await scanCampaign(provider, chain.chainId, c);
+    const makeProvider = () =>
+      new ethers.JsonRpcProvider(rpcList[rpcIdx], undefined, {
+        // reduce batch eth_getLogs pressure on public endpoints
+        batchMaxCount: 1,
+        batchStallTime: 0
+      });
+
+    const rotate = () => {
+      rpcIdx = (rpcIdx + 1) % rpcList.length;
+    };
+
+    const withProviderRetry = async <T>(fn: (p: ethers.JsonRpcProvider) => Promise<T>): Promise<T> => {
+      let lastErr: any;
+
+      // try up to 2 full rotations
+      for (let attempt = 0; attempt < rpcList.length * 2; attempt++) {
+        const p = makeProvider();
+        const url = rpcList[rpcIdx];
+
+        try {
+          return await fn(p);
+        } catch (e: any) {
+          lastErr = e;
+
+          if (isRateLimitError(e) || isRpcTransportError(e) || isPrunedHistoryError(e)) {
+            console.warn("RPC error; rotating endpoint", {
+              chainId: chain.chainId,
+              rpc: url,
+              err: e?.shortMessage || e?.message || e
+            });
+
+            rotate();
+            await sleep(500 + Math.floor(Math.random() * 500));
+            continue;
+          }
+
+          // Non-transient error: bubble up
+          throw e;
+        }
+      }
+
+      throw lastErr;
+    };
+
+    // Compute scanning head for this pass
+    const head = await withProviderRetry((p) => p.getBlockNumber());
+    const target = Math.max(0, head - ENV.CONFIRMATIONS);
+
+    // ---------------- Factory scan ----------------
+    try {
+      const cursor = "factory";
+      const state = await getState(chain.chainId, cursor);
+      const baselineStart = computeStartBlock(chain, target, state);
+      const windowStart = Math.max(0, target - opts.lookbackBlocks);
+      const from = opts.mode === "repair"
+        ? Math.max(windowStart, Math.max(0, state - opts.rewindBlocks))
+        : Math.max(baselineStart, windowStart);
+
+      await withProviderRetry((p) => scanFactoryRange(p, chain, from, target));
+    } catch (e) {
+      console.error("scanFactory error (all RPCs failed)", { chainId: chain.chainId }, e);
+    }
+
+    // ---------------- Campaign scans ----------------
+    let campaigns: string[] = [];
+    try {
+      campaigns = await listActiveCampaigns(chain.chainId);
+    } catch (e) {
+      console.error("listActiveCampaigns error", { chainId: chain.chainId }, e);
+      continue;
+    }
+
+    for (const campaign of campaigns) {
+      try {
+        const cursor = `campaign:${campaign.toLowerCase()}`;
+        const state = await getState(chain.chainId, cursor);
+        const windowStart = Math.max(0, target - opts.lookbackBlocks);
+
+        // In normal mode, campaign scans should start from their cursor state.
+        // In repair mode, rewind the cursor slightly but never earlier than windowStart.
+        const from = opts.mode === "repair"
+          ? Math.max(windowStart, Math.max(0, state - opts.rewindBlocks))
+          : (state > 0 ? state : windowStart);
+
+        await withProviderRetry((p) => scanCampaignRange(p, chain.chainId, campaign, from, target));
+      } catch (e) {
+        console.error("scanCampaign error (all RPCs failed)", { chainId: chain.chainId, campaign }, e);
+      }
     }
   }
 }

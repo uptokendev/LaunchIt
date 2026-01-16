@@ -16,8 +16,27 @@ export const ENV = {
   FACTORY_ADDRESS_97: process.env.FACTORY_ADDRESS_97 || "",
   FACTORY_ADDRESS_56: process.env.FACTORY_ADDRESS_56 || "",
 
-  CONFIRMATIONS: Number(process.env.CONFIRMATIONS || "5"),
+  // Indexing window controls
+  // Set FACTORY_START_BLOCK_97 to the factory deployment block (BSC testnet: 83444786 in your current deployment).
+  FACTORY_START_BLOCK_97: Number(process.env.FACTORY_START_BLOCK_97 || 0),
+  FACTORY_START_BLOCK_56: Number(process.env.FACTORY_START_BLOCK_56 || 0),
+  // If FACTORY_START_BLOCK_* is not set, we fallback to (latest - FACTORY_LOOKBACK_BLOCKS)
+  FACTORY_LOOKBACK_BLOCKS: Number(process.env.FACTORY_LOOKBACK_BLOCKS || 250000),
+
+  // Log scanning chunk sizes
   LOG_CHUNK_SIZE: Number(process.env.LOG_CHUNK_SIZE || "2000"),
+  // When we need to split ranges due to public RPC limits, don't split below this span.
+  MIN_LOG_CHUNK_SIZE: Number(process.env.MIN_LOG_CHUNK_SIZE || "250"),
+
+  // Optional daily repair job settings
+  REPAIR_LOOKBACK_BLOCKS: Number(process.env.REPAIR_LOOKBACK_BLOCKS || 20000),
+  REPAIR_REWIND_BLOCKS: Number(process.env.REPAIR_REWIND_BLOCKS || 200),
+
+  // Poll interval for the always-on indexer loop in server.ts
+  // Public RPCs will rate limit if this is too aggressive.
+  INDEXER_INTERVAL_MS: Number(process.env.INDEXER_INTERVAL_MS || 15000),
+
+  CONFIRMATIONS: Number(process.env.CONFIRMATIONS || "5"),
 
   PORT: Number(process.env.PORT || "3000")
 };

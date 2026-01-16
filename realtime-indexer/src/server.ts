@@ -143,12 +143,19 @@ app.listen(ENV.PORT, "0.0.0.0", () => {
   console.log(`realtime-indexer listening on 0.0.0.0:${ENV.PORT}`);
 });
 
-// Indexer loop (MVP)
-// For “hot tokens” we’ll tune batching and concurrency after this is stable.
+// Indexer loop
+// NOTE: Keep this conservative for public RPCs. We also avoid overlap.
+let running = false;
+const INTERVAL_MS = ENV.INDEXER_INTERVAL_MS;
+
 setInterval(async () => {
+  if (running) return;
+  running = true;
   try {
     await runIndexerOnce();
   } catch (e) {
     console.error("indexer loop error", e);
+  } finally {
+    running = false;
   }
-}, 3000);
+}, INTERVAL_MS);

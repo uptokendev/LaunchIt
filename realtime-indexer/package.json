@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "node --enable-source-maps dist/server.js",
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "cron:daily-repair": "node --enable-source-maps dist/jobs/dailyRepair.js"
   },
   "dependencies": {
     "ably": "^2.6.0",
