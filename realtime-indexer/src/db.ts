@@ -8,7 +8,7 @@ function dbHostFromUrl(dbUrl: string): string {
 
 function loadCustomCaIfEnabled(): string | null {
   // Only use a custom CA if explicitly enabled.
-  const enabled = String(process.env.PG_USE_CUSTOM_CA || "").trim() === "0";
+  const enabled = String(process.env.PG_USE_CUSTOM_CA || "").trim() === "1";
   if (!enabled) return null;
 
   const b64 = process.env.PG_CA_CERT_B64;
