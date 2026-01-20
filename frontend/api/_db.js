@@ -1,14 +1,19 @@
 import pg from "pg";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 
 const { Pool } = pg;
 
 const DATABASE_URL = process.env.DATABASE_URL;
 
-function loadCaPem() {
-  // 1) Base64 env var (best on Vercel)
+/**
+ * Standardize on Supabase Postgres.
+ *
+ * Supabase uses a public CA-signed certificate, so you typically do NOT need
+ * to provide a custom CA. Keep TLS enabled by default.
+ *
+ * If you are connecting to a local Postgres for development, you can disable
+ * TLS by setting PG_DISABLE_SSL=1.
+ */
+function loadOptionalCaPem() {
   const b64 = process.env.PG_CA_CERT_B64;
   if (b64) {
     const pem = Buffer.from(b64, "base64").toString("utf8");
@@ -16,18 +21,10 @@ function loadCaPem() {
     throw new Error("PG_CA_CERT_B64 does not decode to a PEM certificate");
   }
 
-  // 2) Optional plain PEM env var (with \n)
   const pem = process.env.PG_CA_CERT;
   if (pem) return pem.includes("\\n") ? pem.replace(/\\n/g, "\n") : pem;
 
-  // 3) Optional repo file fallback
-  try {
-    const __filename = fileURLToPath(import.meta.url);
-    const __dirname = path.dirname(__filename);
-    return fs.readFileSync(path.join(__dirname, "certs", "aiven-ca.pem"), "utf8");
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 function parseDbUrl(url) {
@@ -48,7 +45,8 @@ if (!_pool) {
   if (!DATABASE_URL) throw new Error("DATABASE_URL missing");
 
   const { host, port, user, password, database } = parseDbUrl(DATABASE_URL);
-  const ca = loadCaPem();
+  const ca = loadOptionalCaPem();
+  const sslDisabled = String(process.env.PG_DISABLE_SSL || "").trim() === "1";
 
   console.log("[api/_db] PG host:", host, "port:", port, "db:", database);
   console.log("[api/_db] CA loaded:", Boolean(ca), "CA bytes:", ca ? ca.length : 0);
@@ -60,10 +58,11 @@ if (!_pool) {
     password,
     database,
 
-    // IMPORTANT: explicitly provide CA to TLS.
-    ssl: ca
-      ? { ca, rejectUnauthorized: true, servername: host }
-      : { rejectUnauthorized: false },
+    ssl: sslDisabled
+      ? false
+      : ca
+        ? { ca, rejectUnauthorized: true, servername: host }
+        : { rejectUnauthorized: true, servername: host },
 
     max: 2,
     idleTimeoutMillis: 30_000,

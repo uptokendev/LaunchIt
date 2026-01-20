@@ -9,6 +9,14 @@ Pump.fun–style bonding-curve launches for BSC. The `LaunchFactory` contract de
 - `frontend/` — Vite + React UI (ethers v6) that drives the contracts via ABI files in `src/abi`.
 - `hardhat.config.ts` — BSC mainnet/testnet + local hardhat network config.
 
+## Backend services (single DB: Supabase)
+This repo contains two server-side components:
+
+1) **`realtime-indexer/` (Railway)** — indexes on-chain trades and builds candles/stats.
+2) **`frontend/api/` (Vercel serverless)** — profiles, comments, SIWE-like nonce auth, and uploads.
+
+**Both** must point at the **same Supabase Postgres** via `DATABASE_URL`.
+
 ## Prerequisites
 - Node.js 20+ and npm
 - A wallet/key with BNB for testnet/mainnet deployments
@@ -34,11 +42,26 @@ FEE_RECIPIENT=0x...         # protocol fee receiver
 PROTOCOL_FEE_BPS=250        # protocol fee in basis points (0–1000)
 ```
 
-Frontend `.env` (in `frontend/.env`) expects:
+Frontend `.env` (copy from `frontend/.env.example`) expects:
 ```
-VITE_FACTORY_ADDRESS=0x...        # LaunchFactory address
-VITE_MOCK_ROUTER_ADDRESS=0x...    # only needed when showing mock router info in the UI
+# Trades/candles/stats API (Railway)
+VITE_REALTIME_API_BASE=https://<your-railway-service>
+
+# Profile/comments API (Vercel). Leave empty for relative /api/*.
+VITE_API_BASE_URL=
+
+# Optional: factory address(es)
+# VITE_FACTORY_ADDRESS_97=0x...
+# VITE_FACTORY_ADDRESS_56=0x...
 ```
+
+### Supabase migrations
+Apply these migrations (in order) to your Supabase database:
+
+- `db/migrations/001_init.sql`
+- `db/migrations/002_social.sql`
+- `db/migrations/003_indexer.sql` (trades/candles/stats/indexer_state)
+- `db/migrations/004_social_fixes.sql` (auth nonce compatibility)
 
 ## Useful npm scripts
 - `npm run build` — compile contracts with Hardhat.
@@ -49,7 +72,7 @@ VITE_MOCK_ROUTER_ADDRESS=0x...    # only needed when showing mock router info in
 ## Local development workflow
 1. **Start a local chain** (optional): `npx hardhat node`.
 2. **Deploy contracts**: `npx hardhat run scripts/deployFactory.ts --network localhost` (or `bsctestnet` / `bsc`). With `DEPLOY_MOCK_ROUTER=true` and no `ROUTER_ADDRESS`, a mock router is deployed automatically.
-3. **Update the UI env**: copy the printed `FACTORY_ADDRESS` (and `MOCK_ROUTER_ADDRESS` if used) into `frontend/.env`.
+3. **Update the UI env**: copy the printed `FACTORY_ADDRESS` (and `MOCK_ROUTER_ADDRESS` if used) into `frontend/.env.local` (do not commit).
 4. **Run the frontend**: `npm run frontend` from the repo root, then open the shown localhost URL and connect your wallet to the same network.
 
 ## Testing

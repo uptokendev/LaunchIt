@@ -1,7 +1,4 @@
 import pg from "pg";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 
 const { Pool } = pg;
 
@@ -48,21 +45,9 @@ function decodeJwtUnsafe(token) {
   }
 }
 
-function getRepoAivenCaInfo() {
-  try {
-    const __filename = fileURLToPath(import.meta.url);
-    const __dirname = path.dirname(__filename);
-    const p = path.join(__dirname, "certs", "aiven-ca.pem");
-    const exists = fs.existsSync(p);
-    const bytes = exists ? fs.statSync(p).size : 0;
-    return { exists, bytes, path: exists ? "frontend/api/certs/aiven-ca.pem" : null };
-  } catch {
-    return { exists: false, bytes: 0, path: null };
-  }
-}
-
-function loadCaPem() {
-  // 1) Base64 env var (recommended for Vercel)
+function loadOptionalCaPem() {
+  // Optional escape hatch: allow providing a custom CA PEM via env.
+  // Supabase uses a public CA-signed certificate; you typically do NOT need this.
   const b64 = process.env.PG_CA_CERT_B64;
   if (b64) {
     const pem = Buffer.from(b64, "base64").toString("utf8");
@@ -70,15 +55,8 @@ function loadCaPem() {
     throw new Error("PG_CA_CERT_B64 does not decode to a PEM certificate");
   }
 
-  // 2) Plain PEM env var (with \n)
   const pem = process.env.PG_CA_CERT;
   if (pem) return pem.includes("\\n") ? pem.replace(/\\n/g, "\n") : pem;
-
-  // 3) Repo fallback (Aiven)
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = path.dirname(__filename);
-  const p = path.join(__dirname, "certs", "aiven-ca.pem");
-  if (fs.existsSync(p)) return fs.readFileSync(p, "utf8");
 
   return null;
 }
@@ -116,15 +94,17 @@ async function pgCheck() {
 
   let ca = null;
   try {
-    ca = loadCaPem();
+    ca = loadOptionalCaPem();
   } catch (e) {
     return { ok: false, error: { message: "Failed to load CA cert", detail: safeError(e) } };
   }
 
-  const ssl =
-    ca
+  const sslDisabled = String(process.env.PG_DISABLE_SSL || "").trim() === "1";
+  const ssl = sslDisabled
+    ? false
+    : ca
       ? { ca, rejectUnauthorized: true, servername: host }
-      : { rejectUnauthorized: false, servername: host };
+      : { rejectUnauthorized: true, servername: host };
 
   const pool = new Pool({
     connectionString: DATABASE_URL,
@@ -162,7 +142,7 @@ async function pgCheck() {
       checks.auth_nonces_nonce = names.has("nonce");
     }
 
-    return { ok: true, latencyMs, ssl: { hasCa: Boolean(ca), rejectUnauthorized: Boolean(ca) }, checks };
+    return { ok: true, latencyMs, ssl: { hasCa: Boolean(ca), rejectUnauthorized: true }, checks };
   } catch (e) {
     return { ok: false, error: safeError(e), ssl: { hasCa: Boolean(ca) } };
   } finally {
@@ -350,8 +330,6 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: "Not found" });
     }
 
-    const repoCa = getRepoAivenCaInfo();
-
     const out = {
       ok: false,
       runtime: {
@@ -361,7 +339,7 @@ export default async function handler(req, res) {
         DATABASE_URL: Boolean(process.env.DATABASE_URL),
         PG_CA_CERT_B64: Boolean(process.env.PG_CA_CERT_B64),
         PG_CA_CERT: Boolean(process.env.PG_CA_CERT),
-        repo_aiven_ca_pem: repoCa,
+        PG_DISABLE_SSL: Boolean(process.env.PG_DISABLE_SSL),
         SUPABASE_URL: Boolean(process.env.SUPABASE_URL),
         SUPABASE_SERVICE_ROLE_KEY: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
         // Ably: server side should have ABLY_API_KEY (do not expose it)
@@ -371,7 +349,7 @@ export default async function handler(req, res) {
         RAILWAY_INDEXER_URL: Boolean(process.env.RAILWAY_INDEXER_URL),
       },
       redacted: {
-        // helpful to verify you're pointing to Aiven without leaking secrets
+        // helpful to verify you're pointing to the expected Postgres without leaking secrets
         DATABASE_URL_host: process.env.DATABASE_URL ? (() => {
           try { return parseDbUrl(process.env.DATABASE_URL).host; } catch { return "invalid"; }
         })() : "",
@@ -381,7 +359,8 @@ export default async function handler(req, res) {
       recommendations: [],
     };
 
-    out.checks.aiven_postgres = await pgCheck();
+    // DATABASE_URL should point at Supabase Postgres (single source of truth)
+    out.checks.supabase_postgres = await pgCheck();
 
     // Railway (indexer health)
 out.checks.railway = await checkRailway();
@@ -414,7 +393,7 @@ out.checks.ably = await checkAblyServerKey();
 
 if (!out.checks.railway?.ok) {
   out.recommendations.push(
-    "Railway /health is failing or unreachable. Set RAILWAY_INDEXER_URL on Vercel and confirm the indexer can connect to Aiven/Supabase without TLS issues."
+    "Railway /health is failing or unreachable. Set RAILWAY_INDEXER_URL on Vercel and confirm the indexer can connect to Supabase Postgres."
   );
 }
 
@@ -429,9 +408,9 @@ if (!out.checks.ably?.ok) {
     "Ably server key is missing/invalid on Vercel. Set ABLY_API_KEY (keyName:keySecret). Client-side should not use the server key."
   );
 }
-    if (!out.checks.aiven_postgres.ok) {
+    if (!out.checks.supabase_postgres.ok) {
       out.recommendations.push(
-        "Aiven DB check failed. Look at checks.aiven_postgres.error for the exact TLS/auth/host issue."
+        "Postgres DB check failed. Look at checks.supabase_postgres.error for the exact TLS/auth/host issue."
       );
       if (!out.env_presence.DATABASE_URL) {
         out.recommendations.push(
@@ -439,9 +418,9 @@ if (!out.checks.ably?.ok) {
         );
       }
     } else {
-      const c = out.checks.aiven_postgres.checks || {};
-      if (!c.user_profiles) out.recommendations.push("Missing table user_profiles on Aiven. Apply db/migrations/002_social.sql.");
-      if (!c.token_comments) out.recommendations.push("Missing table token_comments on Aiven. Apply db/migrations/002_social.sql.");
+      const c = out.checks.supabase_postgres.checks || {};
+      if (!c.user_profiles) out.recommendations.push("Missing table user_profiles. Apply db/migrations/002_social.sql.");
+      if (!c.token_comments) out.recommendations.push("Missing table token_comments. Apply db/migrations/002_social.sql.");
       if (c.auth_nonces && !c.auth_nonces_used_at) {
         out.recommendations.push(
           "auth_nonces.used_at column is missing but your API expects it. Add the column or update the queries/migration."
@@ -449,32 +428,27 @@ if (!out.checks.ably?.ok) {
       }
     }
 
-    out.ok =
-  Boolean(out.checks.aiven_postgres?.ok) &&
-  Boolean(out.checks.railway?.ok || !process.env.RAILWAY_INDEXER_URL) && // don't fail overall if you haven't configured it yet
-  Boolean(out.checks.supabase?.ok) &&
-  Boolean(out.checks.ably?.ok || true); // keep overall green even if Ably isn't configured yet
-  const gates = {
-  core: [
-    { name: "Aiven (profiles/comments)", ok: Boolean(out.checks.aiven_postgres?.ok) },
-    { name: "Supabase reachability (token data)", ok: Boolean(out.checks.supabase?.ok) },
-  ],
-  goLive: [
-    { name: "Aiven (profiles/comments)", ok: Boolean(out.checks.aiven_postgres?.ok) },
-    { name: "Railway indexer /health", ok: Boolean(out.checks.railway?.ok) },
-    { name: "Supabase reachability", ok: Boolean(out.checks.supabase?.ok) },
-    { name: "Supabase service role (uploads)", ok: Boolean(out.checks.supabase_service_role?.ok) },
-    { name: "Ably server key", ok: Boolean(out.checks.ably?.ok) },
-  ],
-};
+    const gates = {
+      core: [
+        { name: "Supabase Postgres (DATABASE_URL)", ok: Boolean(out.checks.supabase_postgres?.ok) },
+        { name: "Supabase reachability (REST)", ok: Boolean(out.checks.supabase?.ok) },
+      ],
+      goLive: [
+        { name: "Supabase Postgres (DATABASE_URL)", ok: Boolean(out.checks.supabase_postgres?.ok) },
+        { name: "Railway indexer /health", ok: Boolean(out.checks.railway?.ok) },
+        { name: "Supabase reachability", ok: Boolean(out.checks.supabase?.ok) },
+        { name: "Supabase service role (uploads)", ok: Boolean(out.checks.supabase_service_role?.ok) },
+        { name: "Ably server key", ok: Boolean(out.checks.ably?.ok) },
+      ],
+    };
 
-out.status = {
-  coreReady: gates.core.every((g) => g.ok),
-  goLiveReady: gates.goLive.every((g) => g.ok),
-  gates,
-};
+    out.status = {
+      coreReady: gates.core.every((g) => g.ok),
+      goLiveReady: gates.goLive.every((g) => g.ok),
+      gates,
+    };
 
-out.ok = out.status.coreReady;
+    out.ok = out.status.coreReady;
 
     return res.status(200).json(out);
   } catch (e) {

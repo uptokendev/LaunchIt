@@ -134,7 +134,7 @@ th:nth-child(3), td:nth-child(3){ width:56%; }
     <header>
       <div>
         <h1>UPMEME Diagnostics</h1>
-        <div class="sub">Readable health view for Aiven (social) and future integrations. Token is required via <span class="mono">?token=</span>.</div>
+        <div class="sub">Readable health view for Supabase Postgres (single DB) and integrations. Token is required via <span class="mono">?token=</span>.</div>
         <div class="row">
           <span id="overall" class="pill"><span class="dot info"></span><span>Loading…</span></span>
           <span class="pill"><span class="dot info"></span><span class="mono" id="ts">—</span></span>
@@ -190,11 +190,11 @@ th:nth-child(3), td:nth-child(3){ width:56%; }
 </div>
 
 <div class="card">
-  <h2>Aiven (Social DB)</h2>
+  <h2>Supabase Postgres (DATABASE_URL)</h2>
   <div class="body">
     <table>
       <thead><tr><th>Check</th><th>Status</th><th>Details</th></tr></thead>
-      <tbody id="aivenRows"></tbody>
+      <tbody id="dbRows"></tbody>
     </table>
   </div>
 </div>
@@ -314,9 +314,6 @@ th:nth-child(3), td:nth-child(3){ width:56%; }
   const rows = [
     ["NODE_ENV", badge("info", j?.runtime?.nodeEnv || "—"), "<span class='mono'>runtime</span>"],
     ["DATABASE_URL", env.DATABASE_URL ? badge("ok", "Present") : badge("bad", "Missing"), "host: <span class='mono'>" + host + "</span>"],
-    ["Aiven CA file", env.repo_aiven_ca_pem?.exists ? badge("ok","Present") : badge("bad","Missing"),
-      env.repo_aiven_ca_pem?.exists ? ("bytes: <span class='mono'>" + env.repo_aiven_ca_pem.bytes + "</span>") : "—"
-    ],
     ["RAILWAY_INDEXER_URL", env.RAILWAY_INDEXER_URL ? badge("ok","Present") : badge("warn","Missing"),
       env.RAILWAY_INDEXER_URL ? "used for /health checks" : "optional until you wire it"
     ],
@@ -327,9 +324,9 @@ th:nth-child(3), td:nth-child(3){ width:56%; }
   ).join("");
 }
 
-function setAivenRows(j) {
-  const tbody = document.getElementById("aivenRows");
-  const a = j?.checks?.aiven_postgres;
+function setDbRows(j) {
+  const tbody = document.getElementById("dbRows");
+  const a = j?.checks?.supabase_postgres;
   const env = j?.env_presence || {};
   const host = j?.redacted?.DATABASE_URL_host || "—";
 
@@ -339,7 +336,7 @@ function setAivenRows(j) {
   rows.push([
     "<span class='mono'>Configuration</span>",
     badge("info", "Section"),
-    "Validates DB env presence and CA source selection used for TLS verification."
+    "Validates DB env presence and TLS settings used for the Supabase Postgres connection."
   ]);
 
   rows.push([
@@ -348,18 +345,13 @@ function setAivenRows(j) {
     env.DATABASE_URL ? ("host: <span class='mono'>" + host + "</span>") : "Add DATABASE_URL on Vercel (Production)."
   ]);
 
-  // CA sources: prefer env CA; fallback to repo CA file
-  const hasEnvCa = !!env.PG_CA_CERT_B64 || !!env.PG_CA_CERT;
-  const repoCa = env.repo_aiven_ca_pem?.exists;
-
+  const sslDisabled = String(env.PG_DISABLE_SSL || "") === "1";
   rows.push([
-    "CA source",
-    (hasEnvCa || repoCa) ? badge("ok", "Available") : badge("bad", "Missing"),
-    hasEnvCa
-      ? "Using CA from env (<span class='mono'>PG_CA_CERT_B64</span> / <span class='mono'>PG_CA_CERT</span>)."
-      : repoCa
-      ? ("Using repo CA file (<span class='mono'>aiven-ca.pem</span>, bytes: <span class='mono'>" + (env.repo_aiven_ca_pem?.bytes ?? "—") + "</span>).")
-      : "No CA available. Add PG_CA_CERT_B64 or include repo CA file."
+    "TLS",
+    sslDisabled ? badge("warn", "Disabled") : badge("ok", "Enabled"),
+    sslDisabled
+      ? "TLS is disabled via <span class='mono'>PG_DISABLE_SSL=1</span>. Use this only for local Postgres."
+      : "TLS is enabled. Supabase uses a public CA-signed certificate; a custom CA is optional."
   ]);
 
   // spacer
@@ -373,7 +365,7 @@ function setAivenRows(j) {
   ]);
 
   if (!a) {
-    rows.push(["DB check", badge("bad", "No data"), "No diagnostics data for Aiven connectivity."]);
+    rows.push(["DB check", badge("bad", "No data"), "No diagnostics data for Postgres connectivity."]);
   } else if (!a.ok) {
     const code = a.error?.code ? ("<span class='mono'>" + a.error.code + "</span> ") : "";
     const msg = a.error?.message || "Unknown error";
@@ -672,7 +664,7 @@ function setAblyRows(j) {
         ["DATABASE_URL", !!e.DATABASE_URL, j?.redacted?.DATABASE_URL_host ? ("host: " + j.redacted.DATABASE_URL_host) : ""],
         ["PG_CA_CERT_B64", !!e.PG_CA_CERT_B64, ""],
         ["PG_CA_CERT", !!e.PG_CA_CERT, ""],
-        ["repo aiven-ca.pem", !!e.repo_aiven_ca_pem?.exists, e.repo_aiven_ca_pem?.exists ? ("bytes: " + e.repo_aiven_ca_pem.bytes) : ""],
+        ["PG_DISABLE_SSL", String(e.PG_DISABLE_SSL || "") === "1", "set to 1 only for local Postgres"],
         ["SUPABASE_URL", !!e.SUPABASE_URL, ""],
         ["SUPABASE_SERVICE_ROLE_KEY", !!e.SUPABASE_SERVICE_ROLE_KEY, ""],
         ["ABLY_API_KEY", !!e.ABLY_API_KEY, ""],
@@ -718,7 +710,7 @@ function setAblyRows(j) {
       setHeaderMeta(j);
       setReadiness(j);
       setVercelRows(j);
-setAivenRows(j);
+setDbRows(j);
 setSupabaseRows(j);
 setRailwayRows(j);
 setAblyRows(j);
