@@ -609,19 +609,21 @@ async function runIndexerCore(opts: { mode: "normal" | "repair"; lookbackBlocks:
     const target = Math.max(0, head - ENV.CONFIRMATIONS);
 
     // ---------------- Factory scan ----------------
-    try {
-      const cursor = "factory";
-      const state = await getState(chain.chainId, cursor);
-      const baselineStart = computeStartBlock(chain, target, state);
-      const windowStart = Math.max(0, target - opts.lookbackBlocks);
-      const from = opts.mode === "repair"
-        ? Math.max(windowStart, Math.max(0, state - opts.rewindBlocks))
-        : Math.max(baselineStart, windowStart);
+try {
+  const cursor = "factory";
+  const state = await getState(chain.chainId, cursor);
 
-      await withProviderRetry((p) => scanFactoryRange(p, chain, from, target));
-    } catch (e) {
-      console.error("scanFactory error (all RPCs failed)", { chainId: chain.chainId }, e);
-    }
+  // Start from: state if exists, else configured factoryStartBlock, else (target - lookback)
+  const baselineStart = computeStartBlock(chain, target, state);
+  const from = baselineStart;
+
+  // Cap how much we scan per tick to avoid huge catch-up ranges
+  const to = Math.min(target, from + ENV.MAX_FACTORY_SCAN_BLOCKS - 1);
+
+  await withProviderRetry((p) => scanFactoryRange(p, chain, from, to));
+} catch (e) {
+  console.error("scanFactory error (all RPCs failed)", { chainId: chain.chainId }, e);
+}
 
     // ---------------- Campaign scans ----------------
     let campaigns: string[] = [];
@@ -633,21 +635,21 @@ async function runIndexerCore(opts: { mode: "normal" | "repair"; lookbackBlocks:
     }
 
     for (const campaign of campaigns) {
-      try {
-        const cursor = `campaign:${campaign.toLowerCase()}`;
-        const state = await getState(chain.chainId, cursor);
-        const windowStart = Math.max(0, target - opts.lookbackBlocks);
+  try {
+    const cursor = `campaign:${campaign.toLowerCase()}`;
+    const state = await getState(chain.chainId, cursor);
 
-        // In normal mode, campaign scans should start from their cursor state.
-        // In repair mode, rewind the cursor slightly but never earlier than windowStart.
-        const from = opts.mode === "repair"
-          ? Math.max(windowStart, Math.max(0, state - opts.rewindBlocks))
-          : (state > 0 ? state : windowStart);
+    // If we have a cursor, continue from it; otherwise only scan recent history
+    const windowStart = Math.max(0, target - opts.lookbackBlocks);
+    const from = state > 0 ? state : windowStart;
 
-        await withProviderRetry((p) => scanCampaignRange(p, chain.chainId, campaign, from, target));
-      } catch (e) {
-        console.error("scanCampaign error (all RPCs failed)", { chainId: chain.chainId, campaign }, e);
-      }
-    }
+    // Cap per tick so we actually advance and eventually reach head
+    const to = Math.min(target, from + ENV.MAX_CAMPAIGN_SCAN_BLOCKS - 1);
+
+    await withProviderRetry((p) => scanCampaignRange(p, chain.chainId, campaign, from, to));
+  } catch (e) {
+    console.error("scanCampaign error (all RPCs failed)", { chainId: chain.chainId, campaign }, e);
+  }
+}
   }
 }
