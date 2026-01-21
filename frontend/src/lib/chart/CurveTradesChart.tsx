@@ -55,30 +55,33 @@ export function CurveTradesChart({ points, intervalSec, height }: Props) {
       height: initH,
 
       layout: {
-        background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "rgba(255,255,255,0.75)",
-      },
+  background: { type: ColorType.Solid, color: "transparent" },
+  textColor: "rgba(255,255,255,0.70)", // general UI text (time axis etc.)
+},
 
-      grid: {
-        vertLines: { color: "rgba(255,255,255,0.06)" },
-        horzLines: { color: "rgba(255,255,255,0.06)" },
-      },
+grid: {
+  // keep vertical lines removed
+  horzLines: { color: "rgba(255,255,255,0.06)" },
+},
 
       crosshair: { mode: CrosshairMode.Normal },
 
       rightPriceScale: {
-  borderColor: "rgba(255,255,255,0.10)",
-  // More bottom room so candles never visually overlap the volume band.
-  // You can tune bottom between 0.30–0.40 depending on how tall you want volume.
-  scaleMargins: { top: 0.10, bottom: 0.35 },
+  borderColor: "rgba(255,255,255,0.18)",
+  textColor: "rgba(255,255,255,0.78)", // IMPORTANT: price scale labels visible
+  ticksVisible: true,
+  entireTextOnly: true,
+  scaleMargins: { top: 0.08, bottom: 0.08 }, // since you removed volume, reduce this
 },
 
       timeScale: {
-        borderColor: "rgba(255,255,255,0.10)",
-        timeVisible: true,
-        secondsVisible: intervalSec <= 60,
-        rightOffset: 4,
-      },
+  borderColor: "rgba(255,255,255,0.12)",
+  timeVisible: true,
+  secondsVisible: intervalSec <= 60,
+  rightOffset: 6,
+  barSpacing: 4,      // IMPORTANT: smaller candles (TradingView-like density)
+  minBarSpacing: 2.5, // prevents huge candles when zoomed in
+},
 
       // TradingView-like interaction
       handleScroll: {
@@ -108,21 +111,9 @@ export function CurveTradesChart({ points, intervalSec, height }: Props) {
       lastValueVisible: true,
     });
 
-    const volSeries = chart.addSeries(HistogramSeries, {
-      priceScaleId: "vol", // dedicate a separate scale for volume
-      priceFormat: { type: "volume" },
-      lastValueVisible: false,
-      priceLineVisible: false,
-    });
-
-    // Put volume at the bottom like TradingView
-    volSeries.priceScale().applyOptions({
-      scaleMargins: { top: 0.78, bottom: 0.02 },
-    });
 
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
-    volumeSeriesRef.current = volSeries;
 
     // Responsive resize
     const ro = new ResizeObserver(() => {
@@ -153,26 +144,15 @@ export function CurveTradesChart({ points, intervalSec, height }: Props) {
   }, [height, intervalSec]);
 
   useEffect(() => {
-    const candleSeries = candleSeriesRef.current as any;
-    const volSeries = volumeSeriesRef.current as any;
-    if (!candleSeries || !volSeries) return;
+  const candleSeries = candleSeriesRef.current as any;
+  if (!candleSeries) return;
 
-    candleSeries.setData(candles as any);
+  candleSeries.setData(candles as any);
 
-    const vData = volumes.map((v, idx) => {
-      const c = candles[idx];
-      const isUp = c ? c.close >= c.open : true;
-      return {
-        time: v.time,
-        value: v.value,
-        color: isUp ? "rgba(38,166,154,0.6)" : "rgba(239,83,80,0.6)",
-      };
-    });
-
-    volSeries.setData(vData as any);
-
-    chartRef.current?.timeScale().fitContent();
-  }, [candles, volumes]);
+  // Fit content only on first load or when interval changes tends to look better,
+  // but keeping it here is ok if your dataset is not tiny.
+  chartRef.current?.timeScale().fitContent();
+}, [candles, intervalSec]);
 
   return (
     <div
