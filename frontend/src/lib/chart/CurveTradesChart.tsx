@@ -79,7 +79,7 @@ grid: {
   timeVisible: true,
   secondsVisible: intervalSec <= 60,
   rightOffset: 6,
-  barSpacing: 4,      // IMPORTANT: smaller candles (TradingView-like density)
+  barSpacing: 3,      // IMPORTANT: smaller candles (TradingView-like density)
   minBarSpacing: 2.5, // prevents huge candles when zoomed in
 },
 
