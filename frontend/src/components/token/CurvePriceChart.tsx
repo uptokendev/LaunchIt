@@ -1,6 +1,6 @@
 // src/components/token/CurvePriceChart.tsx
 import { useMemo, useState } from "react";
-import { useCurveTrades } from "@/hooks/useCurveTrades";
+import { useCurveTrades, type CurveTradePoint } from "@/hooks/useCurveTrades";
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -17,6 +17,10 @@ type CurvePriceChartProps = {
   campaignAddress?: string;
   mockMode?: boolean;
   mockEvents?: MockCurveEvent[];
+  /** Optional override to avoid opening additional realtime connections in child components. */
+  curvePointsOverride?: CurveTradePoint[];
+  loadingOverride?: boolean;
+  errorOverride?: string | null;
 };
 
 type TimeframeKey = "5s" | "1m" | "5m" | "15m" | "1h";
@@ -184,17 +188,19 @@ export const CurvePriceChart = ({
   campaignAddress,
   mockMode = false,
   mockEvents = [],
+  curvePointsOverride,
+  loadingOverride,
+  errorOverride,
 }: CurvePriceChartProps) => {
   const [tf, setTf] = useState<TimeframeKey>("1m");
 
   //
   // 🔹 LIVE CHAIN DATA (only used when mockMode = false)
   //
-  const {
-    points: livePoints,
-    loading: liveLoading,
-    error: liveError,
-  } = useCurveTrades(campaignAddress);
+  const live = useCurveTrades(campaignAddress, { enabled: !curvePointsOverride });
+  const livePoints = curvePointsOverride ?? live.points;
+  const liveLoading = loadingOverride ?? live.loading;
+  const liveError = errorOverride ?? live.error;
 
   //
   // 🔹 MERGE: Choose mock or live data

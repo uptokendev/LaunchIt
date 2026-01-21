@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Ably from "ably";
 import { ethers } from "ethers";
 import { getActiveChainId, type SupportedChainId } from "@/lib/chainConfig";
+import { useAblyTokenChannel } from "@/hooks/useAblyTokenChannel";
 
 // Realtime-indexer HTTP base (Railway). Example: https://upmeme-production.up.railway.app
 const API_BASE = String(import.meta.env.VITE_REALTIME_API_BASE || "").replace(/\/$/, "");
@@ -102,11 +102,10 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
     return getActiveChainId(cid);
   }, [opts?.chainId]);
 
-  const ablyRef = useRef<Ably.Realtime | null>(null);
-  const channelRef = useRef<RealtimeChannel | null>(null);
   const inFlightRef = useRef(false);
+  const initialLoadedRef = useRef(false);
 
-  const reconcileMs = opts?.reconcileMs ?? 10_000;
+  const reconcileMs = opts?.reconcileMs ?? 30_000;
   const limit = Math.min(Math.max(Number(opts?.limit ?? 200), 1), 200);
 
   const apiTradesUrl = useMemo(() => {
@@ -163,10 +162,12 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
     if (inFlightRef.current) return;
     inFlightRef.current = true;
     try {
-      setLoading(true);
+      // Avoid "page reload" feel by only showing the loading state for the first fetch.
+      if (!initialLoadedRef.current) setLoading(true);
       const rows = await fetchJson(apiTradesUrl, signal);
       applySnapshot(Array.isArray(rows) ? rows : []);
       setError(null);
+      initialLoadedRef.current = true;
     } catch (e: any) {
       const msg = e?.message || "Failed to load trades";
       setError(String(msg));
@@ -182,6 +183,7 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
     setPoints([]);
     setLoading(true);
     setError(null);
+    initialLoadedRef.current = false;
 
     pullSnapshot(ac.signal);
 
@@ -197,81 +199,32 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
     };
   }, [enabled, campaignAddress, chainId, pullSnapshot, reconcileMs]);
 
-  // Ably realtime stream (trade events)
-useEffect(() => {
-  if (!enabled || !campaignAddress) return;
+  // Ably realtime stream (trade events) — shared per campaign to avoid multiple WebSockets.
+  const ably = useAblyTokenChannel({ enabled: enabled && !!campaignAddress, chainId, campaignAddress });
+  useEffect(() => {
+    if (!enabled || !campaignAddress) return;
+    if (ably.missingBase || !ably.channel) return;
 
-  // Clean up any previous instances (safety)
-  try {
-    if (channelRef.current) {
-      channelRef.current.unsubscribe();
-      channelRef.current = null;
-    }
-    if (ablyRef.current) {
-      ablyRef.current.close();
-      ablyRef.current = null;
-    }
-  } catch {
-    // ignore
-  }
+    const onTrade = (msg: any) => {
+      const data = msg?.data;
+      if (Array.isArray(data)) return applySnapshot(data);
+      if (data && typeof data === "object") return applySnapshot([data]);
+    };
 
-  const campaign = campaignAddress.toLowerCase();
-  if (!API_BASE) return; // need Railway base for authUrl
-const authUrl = `${API_BASE}/api/ably/token?chainId=${chainId}&campaign=${campaignAddress.toLowerCase()}`;
-
-  const ably = new Ably.Realtime({
-  authUrl,
-  authMethod: "GET",
-});
-
-ably.connection.on((stateChange) => {
-  if (stateChange.current === "failed" || stateChange.current === "suspended") {
-    console.warn("[ably] connection", stateChange.current, stateChange.reason);
-  }
-});
-  ablyRef.current = ably;
-
-  const channelName = `token:${chainId}:${campaign}`;
-  const channel = ably.channels.get(channelName);
-  channelRef.current = channel;
-
-  const onTrade = (msg: any) => {
-    // Expect either a single trade object or an array of trades
-    const data = msg?.data;
-
-    if (Array.isArray(data)) {
-      applySnapshot(data);
-      return;
-    }
-
-    if (data && typeof data === "object") {
-      applySnapshot([data]);
-      return;
-    }
-
-    // ignore malformed payloads
-  };
-
-  // Subscribe to trade events (ensure your indexer publishes with name "trade")
-  channel.subscribe("trade", onTrade);
-
-  return () => {
     try {
-      channel.unsubscribe("trade", onTrade);
-      ably.channels.release(channelName);
-    } catch {
-      // ignore
-    }
-    try {
-      ably.close();
+      ably.channel.subscribe("trade", onTrade);
     } catch {
       // ignore
     }
 
-    channelRef.current = null;
-    ablyRef.current = null;
-  };
-}, [enabled, campaignAddress, chainId, applySnapshot]);
+    return () => {
+      try {
+        ably.channel.unsubscribe("trade", onTrade);
+      } catch {
+        // ignore
+      }
+    };
+  }, [enabled, campaignAddress, ably.channel, ably.missingBase, applySnapshot]);
 
 
   return { points, loading, error };

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Ably from "ably";
 import { getActiveChainId, type SupportedChainId } from "@/lib/chainConfig";
+import { useAblyTokenChannel } from "@/hooks/useAblyTokenChannel";
 
 const API_BASE = String(import.meta.env.VITE_REALTIME_API_BASE || "").replace(/\/$/, "");
 
@@ -32,6 +32,8 @@ export function useTokenStatsRealtime(campaignAddress?: string, chainId?: number
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const initialLoadedRef = useRef(false);
+
   const cid = useMemo<SupportedChainId>(() => getActiveChainId(Number(chainId ?? 97)), [chainId]);
 
   const url = useMemo(() => {
@@ -52,7 +54,7 @@ export function useTokenStatsRealtime(campaignAddress?: string, chainId?: number
       return;
     }
     try {
-      setLoading(true);
+      if (!initialLoadedRef.current) setLoading(true);
       const row = await fetchJson(url, signal);
       if (!row) {
         setStats(null);
@@ -67,6 +69,7 @@ export function useTokenStatsRealtime(campaignAddress?: string, chainId?: number
         updatedAt: String(row.updated_at ?? ""),
       });
       setError(null);
+      initialLoadedRef.current = true;
     } catch (e: any) {
       setError(String(e?.message || "Failed to load token stats"));
     } finally {
@@ -79,6 +82,7 @@ export function useTokenStatsRealtime(campaignAddress?: string, chainId?: number
     const ac = new AbortController();
     setLoading(true);
     setError(null);
+    initialLoadedRef.current = false;
     pull(ac.signal);
     if (!enabled || !campaignAddress) return () => ac.abort();
     const t = setInterval(() => pull(ac.signal), 15_000);
@@ -88,22 +92,16 @@ export function useTokenStatsRealtime(campaignAddress?: string, chainId?: number
     };
   }, [enabled, campaignAddress, cid, pull]);
 
-  // Ably live patches
-  const ablyRef = useRef<Ably.Realtime | null>(null);
+  // Ably live patches (shared channel; avoids multiple WebSockets per TokenDetails page)
+  const ably = useAblyTokenChannel({ enabled: enabled && !!campaignAddress, chainId: cid, campaignAddress });
   useEffect(() => {
     if (!enabled || !campaignAddress) return;
-    if (!API_BASE) return;
-    const authUrl = `${API_BASE}/api/ably/token?chainId=${cid}&campaign=${campaignAddress.toLowerCase()}`;
-const ably = new Ably.Realtime({ authUrl, authMethod: "GET" });
-    ablyRef.current = ably;
-
-    const chName = `token:${cid}:${campaignAddress.toLowerCase()}`;
-    const ch = ably.channels.get(chName);
+    if (ably.missingBase || !ably.channel || !ably.client) return;
 
     const onStats = (msg: any) => {
-      const data: any = msg.data;
+      const data: any = msg?.data;
       if (!data) return;
-      if ((msg.name || "") !== "stats_patch" && String(data.type || "") !== "stats_patch") return;
+      if ((msg?.name || "") !== "stats_patch" && String(data.type || "") !== "stats_patch") return;
 
       setStats((prev) => {
         const next: TokenStatsRealtime = {
@@ -117,20 +115,26 @@ const ably = new Ably.Realtime({ authUrl, authMethod: "GET" });
       });
     };
 
-    const onConnected = (c: any) => {
-      if (c.current === "connected") pull();
+    const onConn = (c: any) => {
+      if (c?.current === "connected") pull();
     };
 
-    ably.connection.on(onConnected);
-    ch.subscribe("stats_patch", onStats);
+    try {
+      ably.client.connection.on(onConn);
+    } catch {
+      // ignore
+    }
+    try {
+      ably.channel.subscribe("stats_patch", onStats);
+    } catch {
+      // ignore
+    }
 
     return () => {
-      try { ch.unsubscribe("stats_patch", onStats); } catch {}
-      try { ably.connection.off(onConnected); } catch {}
-      try { ably.close(); } catch {}
-      ablyRef.current = null;
+      try { ably.channel.unsubscribe("stats_patch", onStats); } catch {}
+      try { ably.client.connection.off(onConn); } catch {}
     };
-  }, [enabled, campaignAddress, cid, pull]);
+  }, [enabled, campaignAddress, cid, pull, ably.channel, ably.client, ably.missingBase]);
 
   return { stats, loading, error };
 }

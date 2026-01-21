@@ -288,7 +288,7 @@ const TokenDetails = () => {
 
   // Read curve trades for transactions + analytics (live mode)
   // Hook returns CurveTrade[] (your "@/types/token" Transaction type)
-  const { points: liveCurvePoints } = useCurveTrades(campaign?.campaign);
+  const { points: liveCurvePoints, loading: liveCurveLoading, error: liveCurveError } = useCurveTrades(campaign?.campaign);
 const liveCurvePointsSafe: CurveTradePoint[] = Array.isArray(liveCurvePoints) ? liveCurvePoints : [];
 
   // Realtime stats from Railway (price/marketcap/24h vol), patched via Ably.
@@ -1358,6 +1358,9 @@ const liveCurvePointsSafe: CurveTradePoint[] = Array.isArray(liveCurvePoints) ? 
                   campaignAddress={campaign?.campaign}
                   mockMode={USE_MOCK_DATA}
                   mockEvents={USE_MOCK_DATA ? getMockCurveEventsForSymbol(campaign?.symbol) : []}
+                  curvePointsOverride={!USE_MOCK_DATA ? liveCurvePoints : undefined}
+                  loadingOverride={!USE_MOCK_DATA ? liveCurveLoading : undefined}
+                  errorOverride={!USE_MOCK_DATA ? liveCurveError : undefined}
                 />
               )}
             </div>
