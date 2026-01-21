@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   createChart,
   CrosshairMode,
   ColorType,
   CandlestickSeries,
-  HistogramSeries,
   type IChartApi,
 } from "lightweight-charts";
 
@@ -16,27 +15,44 @@ type Props = {
   height?: number;
 };
 
-export function CurveTradesChart({ points, intervalSec, height }: Props) {
+function formatCompact(n: number) {
+  if (!Number.isFinite(n)) return "";
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
+  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (abs >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  if (abs >= 1) return n.toFixed(2);
+  return n.toPrecision(2);
+}
+
+export const CurveTradesChart: React.FC<Props> = ({ points, intervalSec, height }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<any>(null);
-  const volumeSeriesRef = useRef<any>(null);
   const roRef = useRef<ResizeObserver | null>(null);
 
-  // Fit only once per interval (prevents “stretching/big candles” on every update)
+  // re-render once per second so we extend to "now"
+  const [nowTick, setNowTick] = useState(0);
+
+  // fit only once per interval
   const fittedRef = useRef<{ intervalSec: number; fitted: boolean }>({ intervalSec, fitted: false });
 
-  const { candles, volumes } = useMemo(
-    () => buildCandles(points ?? [], intervalSec),
-    [points, intervalSec]
-  );
+  useEffect(() => {
+    const id = window.setInterval(() => setNowTick((x) => x + 1), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const candles = useMemo(() => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    return buildCandles(points ?? [], intervalSec, { extendToNow: true, nowSec });
+  }, [points, intervalSec, nowTick]);
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
 
-    // Cleanup previous instance
+    // cleanup previous
     roRef.current?.disconnect();
     roRef.current = null;
 
@@ -45,54 +61,50 @@ export function CurveTradesChart({ points, intervalSec, height }: Props) {
       chartRef.current = null;
     }
 
-    // reset fit flag on rebuild
     fittedRef.current = { intervalSec, fitted: false };
 
-    const rect = el.getBoundingClientRect();
-    const initW = Math.max(10, rect.width || el.clientWidth || 10);
-    const inferredH = rect.height || el.clientHeight || 360;
+    const initW = Math.max(10, el.clientWidth || 10);
+    const inferredH = el.clientHeight || 360;
     const initH = Math.max(200, height ?? inferredH);
 
     const chart = createChart(el, {
       width: initW,
       height: initH,
 
-      // IMPORTANT: opaque chart background so your blur doesn’t show through
       layout: {
-        background: { type: ColorType.Solid, color: "rgba(12,14,18,1)" },
+        background: { type: ColorType.Solid, color: "transparent" },
         textColor: "rgba(255,255,255,0.72)",
       },
 
-      // TradingView-like grid (both directions)
+      // Only horizontal lines (price), no vertical time lines
       grid: {
-        vertLines: { color: "rgba(255,255,255,0.06)" },
-        horzLines: { color: "rgba(255,255,255,0.06)" },
+        vertLines: { visible: false },
+        horzLines: { visible: true, color: "rgba(255,255,255,0.06)" },
       },
 
       crosshair: { mode: CrosshairMode.Normal },
 
       rightPriceScale: {
-        borderColor: "rgba(255,255,255,0.14)",
-        textColor: "rgba(255,255,255,0.78)",
+        visible: true,
+        borderVisible: true,
+        borderColor: "rgba(255,255,255,0.18)",
         ticksVisible: true,
+        textColor: "rgba(255,255,255,0.90)",
         entireTextOnly: true,
-        // Reserve bottom area because volume sits there
-        scaleMargins: { top: 0.08, bottom: 0.28 },
+        scaleMargins: { top: 0.08, bottom: 0.08 },
       },
 
       timeScale: {
+        borderVisible: true,
         borderColor: "rgba(255,255,255,0.12)",
         timeVisible: true,
         secondsVisible: intervalSec <= 60,
-
-        // Candle “density” like the reference chart
-        barSpacing: 5,      // smaller than 8, not too tiny either
-        minBarSpacing: 2.5, // prevents massive candles when zoomed in
-        rightOffset: 8,
+        barSpacing: 4,
+        minBarSpacing: 2.5,
+        rightOffset: 6,
         lockVisibleTimeRangeOnResize: true,
       },
 
-      // Interaction like TradingView
       handleScroll: {
         mouseWheel: true,
         pressedMouseMove: true,
@@ -114,38 +126,22 @@ export function CurveTradesChart({ points, intervalSec, height }: Props) {
       wickDownColor: "#ef5350",
       priceLineVisible: true,
       lastValueVisible: true,
-    });
-
-    // Volume (reference image has it)
-    const volSeries = chart.addSeries(HistogramSeries, {
-      priceScaleId: "vol",
-      priceFormat: { type: "volume" },
-      lastValueVisible: true,  // shows the volume label at right like TV
-      priceLineVisible: false,
-    });
-
-    // Place volume at bottom (version-stable: apply on priceScale)
-    volSeries.priceScale().applyOptions({
-      scaleMargins: { top: 0.78, bottom: 0.02 },
-      borderColor: "rgba(255,255,255,0.00)",
-      textColor: "rgba(255,255,255,0.65)",
+      priceFormat: {
+        type: "custom",
+        minMove: 0.00000001,
+        formatter: (p: number) => formatCompact(p),
+      },
     });
 
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
-    volumeSeriesRef.current = volSeries;
 
-    // Responsive resize
     const ro = new ResizeObserver(() => {
       const c = containerRef.current;
       if (!c) return;
-
-      const r = c.getBoundingClientRect();
-      const w = Math.max(10, r.width || c.clientWidth || 10);
-      const inferred = r.height || c.clientHeight || 360;
-      const h = Math.max(200, height ?? inferred);
-
-      chart.applyOptions({ width: w, height: h });
+      const w = Math.max(10, c.clientWidth || 10);
+      const h2 = Math.max(200, height ?? (c.clientHeight || 360));
+      chart.applyOptions({ width: w, height: h2 });
     });
 
     ro.observe(el);
@@ -154,52 +150,32 @@ export function CurveTradesChart({ points, intervalSec, height }: Props) {
     return () => {
       ro.disconnect();
       roRef.current = null;
-
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
-      volumeSeriesRef.current = null;
     };
   }, [height, intervalSec]);
 
   useEffect(() => {
-    const candleSeries = candleSeriesRef.current;
-    const volSeries = volumeSeriesRef.current;
-    if (!candleSeries || !volSeries) return;
+    const series = candleSeriesRef.current;
+    if (!series) return;
 
-    candleSeries.setData(candles as any);
+    series.setData(candles as any);
 
-    // Volume coloring by candle direction (TradingView-like)
-    const vData = volumes.map((v, idx) => {
-      const c = candles[idx];
-      const isUp = c ? c.close >= c.open : true;
-      return {
-        time: v.time,
-        value: v.value,
-        color: isUp ? "rgba(38,166,154,0.55)" : "rgba(239,83,80,0.55)",
-      };
-    });
-    volSeries.setData(vData as any);
-
-    // Fit only once per timeframe, not on every realtime tick
+    // Fit only once per interval
     if (fittedRef.current.intervalSec !== intervalSec) {
       fittedRef.current = { intervalSec, fitted: false };
     }
-    if (!fittedRef.current.fitted && candles.length > 5) {
+    if (!fittedRef.current.fitted && candles.length > 10) {
       chartRef.current?.timeScale().fitContent();
       fittedRef.current.fitted = true;
     }
-  }, [candles, volumes, intervalSec]);
+  }, [candles, intervalSec]);
 
+  // ALWAYS RETURN JSX (even if points empty)
   return (
-    <div
-      ref={containerRef}
-      style={{
-        width: "100%",
-        height: height ? `${height}px` : "100%",
-        borderRadius: 12,
-        overflow: "hidden", // makes it look like the reference panel
-      }}
-    />
+    <div style={{ width: "100%", height: height ? `${height}px` : "100%", position: "relative" }}>
+      <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />
+    </div>
   );
-}
+};

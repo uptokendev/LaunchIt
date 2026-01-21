@@ -68,9 +68,9 @@ export const CurvePriceChart = ({
   const chartPoints: ChartPoint[] = useMemo(() => {
     if (mockMode) {
       return (mockEvents || [])
-        .map((e) => ({
-          timestamp: Number(e.timestamp ?? 0),
-          value: Number(e.pricePerToken ?? 0),
+        .map((p) => ({
+          timestamp: Number(p.timestamp ?? 0),
+          value: Number(p.pricePerToken ?? 0),
           // mock data doesn't include volume; keep 0
           volume: 0,
         }))
