@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import formidable from "formidable";
 import fs from "fs";
+import crypto from "crypto";
 
 // Keep as-is; harmless unless interpreted Next-style
 export const config = {
@@ -64,10 +65,15 @@ export default async function handler(req, res) {
 
       const bucket = process.env.SUPABASE_BUCKET || "upmeme";
 
+      // Defensive UUID generation across runtimes
+      const uuid =
+        (crypto && typeof crypto.randomUUID === "function" && crypto.randomUUID()) ||
+        `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
       const name =
         kind === "avatar" && address
           ? `avatars/${chainId}/${address}.${ext}`
-          : `logos/${chainId}/${crypto.randomUUID()}.${ext}`;
+          : `logos/${chainId}/${uuid}.${ext}`;
 
       const buf = fs.readFileSync(filepath);
 
