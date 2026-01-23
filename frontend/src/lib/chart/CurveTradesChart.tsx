@@ -103,15 +103,21 @@ export const CurveTradesChart: React.FC<Props> = ({ points, intervalSec, height 
       },
 
       timeScale: {
-        borderVisible: true,
-        borderColor: "rgba(255,255,255,0.12)",
-        timeVisible: true,
-        secondsVisible: intervalSec <= 60,
-        rightOffset: 6,
-        barSpacing: 4,
-        minBarSpacing: 2.5,
-        lockVisibleTimeRangeOnResize: true,
-      },
+  borderVisible: true,
+  borderColor: "rgba(255,255,255,0.12)",
+  timeVisible: true,
+  secondsVisible: intervalSec <= 60,
+
+  rightOffset: 6,
+
+  // MORE GAP BETWEEN CANDLES
+  barSpacing: 10,
+  minBarSpacing: 6,
+
+  lockVisibleTimeRangeOnResize: true,
+  fixLeftEdge: true,
+  fixRightEdge: true,
+},
 
       handleScroll: {
         mouseWheel: true,
