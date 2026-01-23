@@ -111,8 +111,8 @@ export const CurveTradesChart: React.FC<Props> = ({ points, intervalSec, height 
   rightOffset: 6,
 
   // MORE GAP BETWEEN CANDLES
-  barSpacing: 15,
-  minBarSpacing: 6,
+  barSpacing: 12,
+  minBarSpacing: 8,
 
   lockVisibleTimeRangeOnResize: true,
   fixLeftEdge: true,
@@ -138,8 +138,8 @@ export const CurveTradesChart: React.FC<Props> = ({ points, intervalSec, height 
 
   // SHOW SEPARATION BETWEEN FLAT CANDLES
   borderVisible: true,
-  borderUpColor: "rgba(38,166,154,0.9)",
-  borderDownColor: "rgba(239,83,80,0.9)",
+  borderUpColor: "rgba(38,166,154,0.95)",
+  borderDownColor: "rgba(239,83,80,0.95)",
 
   wickUpColor: "#26a69a",
   wickDownColor: "#ef5350",
@@ -196,10 +196,28 @@ export const CurveTradesChart: React.FC<Props> = ({ points, intervalSec, height 
       fittedRef.current = { intervalSec, fitted: false };
     }
 
-    if (!fittedRef.current.fitted && candles.length > 5) {
-      chartRef.current?.timeScale().fitContent();
-      fittedRef.current.fitted = true;
-    }
+    const chart = chartRef.current;
+if (!chart) return;
+
+const bars = candles.length;
+
+const targetBars =
+  intervalSec <= 5 ? 180 :
+  intervalSec <= 60 ? 240 :
+  intervalSec <= 300 ? 180 :
+  intervalSec <= 900 ? 160 :
+  120;
+
+if (fittedRef.current.intervalSec !== intervalSec) {
+  fittedRef.current = { intervalSec, fitted: false };
+}
+
+if (!fittedRef.current.fitted && bars > 5) {
+  const from = Math.max(0, bars - targetBars);
+  const to = bars + 5;
+  chart.timeScale().setVisibleLogicalRange({ from, to });
+  fittedRef.current.fitted = true;
+}
   }, [candles, intervalSec]);
 
   return (
