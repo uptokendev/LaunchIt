@@ -49,7 +49,18 @@ type TxRow = {
   maker: string;
   txHash: string;
 };
+const formatChangePct = (ch: number | null): string => {
+  if (ch == null) return "—";
+  const abs = Math.abs(ch);
+  const decimals =
+    abs >= 1 ? 2 :
+    abs >= 0.1 ? 3 :
+    abs >= 0.01 ? 4 :
+    6;
 
+  const glyph = ch > 0 ? "▲" : ch < 0 ? "▼" : "•";
+  return `${glyph} ${abs.toFixed(decimals)}%`;
+};
 const TokenDetails = () => {
   // URL param: /token/:campaignAddress  (address-based)
   const { campaignAddress } = useParams<{ campaignAddress: string }>();
@@ -412,7 +423,7 @@ const liveCurvePointsSafe: CurveTradePoint[] = Array.isArray(liveCurvePoints) ? 
       const start = startPrice ?? end;
       if (start > 0 && end > 0) {
         const pct = ((end - start) / start) * 100;
-        out[k].change = Number.isFinite(pct) ? Number(pct.toFixed(2)) : null;
+        out[k].change = Number.isFinite(pct) ? pct : null;
       } else {
         out[k].change = null;
       }
@@ -1382,7 +1393,7 @@ setTxs(next);
                                       : "text-muted-foreground"
                                   }`}
                                 >
-                                  {ch == null ? "—" : `${ch > 0 ? "▲" : ch < 0 ? "▼" : "•"} ${Math.abs(ch).toFixed(2)}%`}
+                                  {formatChangePct(ch)}
                                 </span>
                               );
                             })()}
