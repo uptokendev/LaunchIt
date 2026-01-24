@@ -66,9 +66,18 @@ function toNumber(amount: unknown): number {
 }
 
 function toTimestampSec(v: unknown): number {
-  // pg can return Date objects or ISO strings depending on config
   try {
     if (v instanceof Date) return Math.floor(v.getTime() / 1000);
+    if (typeof v === "number") return Math.floor(v > 1e12 ? v / 1000 : v);
+    if (typeof v === "string") {
+      const s = v.trim();
+      if (/^\d+(?:\.\d+)?$/.test(s)) {
+        const n = Number(s);
+        return Number.isFinite(n) ? Math.floor(n > 1e12 ? n / 1000 : n) : 0;
+      }
+      const ms = new Date(s).getTime();
+      return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
+    }
     const ms = new Date(String(v)).getTime();
     return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
   } catch {

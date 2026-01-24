@@ -10,14 +10,16 @@ import { Copy, ExternalLink, Globe, ChevronDown } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import twitterIcon from "@/assets/social/twitter.png";
 import { useLaunchpad } from "@/lib/launchpadClient";
-import type { CampaignInfo, CampaignMetrics, CampaignSummary } from "@/lib/launchpadClient";
+import type { CampaignInfo, CampaignMetrics, CampaignSummary, CampaignActivity } from "@/lib/launchpadClient";
 import { useDexScreenerChart } from "@/hooks/useDexScreenerChart";
 import { useBnbUsdPrice } from "@/hooks/useBnbUsdPrice";
 import { useTokenStatsRealtime } from "@/hooks/useTokenStatsRealtime";
 import { CurvePriceChart } from "@/components/token/CurvePriceChart";
+import { TokenComments } from "@/components/token/TokenComments";
 import { AthBar } from "@/components/token/AthBar";
 import { USE_MOCK_DATA } from "@/config/mockConfig";
 import { getMockCurveEventsForSymbol } from "@/constants/mockCurveTrades";
@@ -87,11 +89,13 @@ const TokenDetails = () => {
   }, [displayDenom]);
 
   // Launchpad hooks + state for the on-chain data
-  const { fetchCampaigns, fetchCampaignSummary, fetchCampaignMetrics, buyTokens, sellTokens } = useLaunchpad();
+  const { fetchCampaigns, fetchCampaignSummary, fetchCampaignMetrics, fetchCampaignActivity, buyTokens, sellTokens } = useLaunchpad();
   const wallet = useWallet();
   const [campaign, setCampaign] = useState<CampaignInfo | null>(null);
   const [metrics, setMetrics] = useState<CampaignMetrics | null>(null);
   const [summary, setSummary] = useState<CampaignSummary | null>(null);
+  const [activity, setActivity] = useState<CampaignActivity | null>(null);
+  const [activityTab, setActivityTab] = useState<"comments" | "trades">("comments");
   const [curveReserveWei, setCurveReserveWei] = useState<bigint | null>(null);
 
   // UI rows for the transactions table
@@ -203,10 +207,20 @@ const TokenDetails = () => {
     if (!input) return null;
     const s = String(input).trim();
     if (!s || s === "—") return null;
-    // Accept forms like "0.1234 BNB", "1.00", etc.
-    const cleaned = s.replace(/[^0-9.\-]/g, "");
-    const n = Number(cleaned);
-    return Number.isFinite(n) ? n : null;
+
+    // Accept forms like:
+    //  - "0.1234 BNB"
+    //  - "1.23k BNB"
+    //  - "1.23k"
+    //  - "0.000123"
+    const m = s.match(/(-?\d+(?:\.\d+)?)(?:\s*([kKmMbBtT]))?/);
+    if (!m) return null;
+    const num = Number(m[1]);
+    if (!Number.isFinite(num)) return null;
+
+    const suf = (m[2] ?? "").toLowerCase();
+    const mult = suf === "k" ? 1e3 : suf === "m" ? 1e6 : suf === "b" ? 1e9 : suf === "t" ? 1e12 : 1;
+    return num * mult;
   };
 
   const formatCompactUsd = (usd: number): string => {
@@ -266,10 +280,14 @@ const TokenDetails = () => {
   const formatCompact = (n: number): string => {
     if (!Number.isFinite(n)) return "—";
     const abs = Math.abs(n);
+    if (abs >= 1e12) return `${(n / 1e12).toFixed(2)}t`;
     if (abs >= 1e9) return `${(n / 1e9).toFixed(2)}b`;
     if (abs >= 1e6) return `${(n / 1e6).toFixed(2)}m`;
     if (abs >= 1e3) return `${(n / 1e3).toFixed(2)}k`;
-    return n.toFixed(2);
+    if (abs >= 1) return n.toFixed(2);
+    if (abs >= 0.01) return n.toFixed(4);
+    if (abs >= 0.0001) return n.toFixed(6);
+    return n.toFixed(8);
   };
 
   const formatAgo = (timestampSecs?: number): string => {
@@ -489,6 +507,72 @@ const liveCurvePointsSafe: CurveTradePoint[] = Array.isArray(liveCurvePoints) ? 
     return formatCompactUsd(volBnb * bnbUsdPrice);
   }, [displayDenom, tokenData.metrics, selectedTimeframe, bnbUsdPrice, bnbUsdLoading]);
 
+  const formatBnbOrUsd = useMemo(() => {
+    return (bnb: number | null | undefined): string => {
+      if (bnb == null || !Number.isFinite(bnb)) return "—";
+      if (displayDenom === "BNB") return `${formatCompact(bnb)} BNB`;
+      if (!bnbUsdPrice) return bnbUsdLoading ? "…" : "—";
+      return formatCompactUsd(bnb * bnbUsdPrice);
+    };
+  }, [displayDenom, bnbUsdPrice, bnbUsdLoading]);
+
+  const flywheel = useMemo(() => {
+    const buyVolBnb = activity ? Number(ethers.formatEther(activity.buyVolumeWei)) : null;
+    const sellVolBnb = activity ? Number(ethers.formatEther(activity.sellVolumeWei)) : null;
+    const netFlowBnb = buyVolBnb != null && sellVolBnb != null ? buyVolBnb - sellVolBnb : null;
+
+    const feeBps = metrics ? Number(metrics.protocolFeeBps) : 0;
+    const feesBnb = buyVolBnb != null && sellVolBnb != null ? (buyVolBnb + sellVolBnb) * (feeBps / 10000) : null;
+
+    return {
+      buyVolume: formatBnbOrUsd(buyVolBnb),
+      sellVolume: formatBnbOrUsd(sellVolBnb),
+      netFlow: formatBnbOrUsd(netFlowBnb),
+      feesEstimated: formatBnbOrUsd(feesBnb),
+      buyers: activity ? String(activity.buyers) : "—",
+      feeRate: metrics ? `${(Number(metrics.protocolFeeBps) / 100).toFixed(2)}%` : "—",
+      lpRate: metrics ? `${(Number(metrics.liquidityBps) / 100).toFixed(2)}%` : "—",
+    };
+  }, [activity, metrics, formatBnbOrUsd]);
+
+  const holderDistribution = useMemo(() => {
+    const shortAddr = (a: string) => (a && a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a);
+
+    const balances = new Map<string, bigint>();
+    for (const p of liveCurvePointsSafe) {
+      const addr = (p.from || "").toLowerCase();
+      if (!addr) continue;
+      const prev = balances.get(addr) ?? 0n;
+      const delta = p.tokenWei ?? 0n;
+      balances.set(addr, p.side === "buy" ? prev + delta : prev - delta);
+    }
+
+    const holders = [...balances.entries()]
+      .filter(([, bal]) => bal > 0n)
+      .map(([addr, bal]) => ({ addr, bal }))
+      .sort((a, b) => (a.bal === b.bal ? 0 : a.bal > b.bal ? -1 : 1));
+
+    const totalBal = holders.reduce((acc, x) => acc + x.bal, 0n);
+    const pct = (bal: bigint) => (totalBal > 0n ? Number((bal * 10000n) / totalBal) / 100 : 0);
+
+    const top = holders.slice(0, 6).map((h) => ({
+      addr: h.addr,
+      addrShort: shortAddr(h.addr),
+      balWei: h.bal,
+      pct: pct(h.bal),
+    }));
+
+    const othersBal = holders.slice(6).reduce((acc, x) => acc + x.bal, 0n);
+    const othersPct = pct(othersBal);
+
+    return {
+      top,
+      othersPct,
+      totalHolders: holders.length,
+    };
+  }, [liveCurvePointsSafe]);
+
+
 
 
 
@@ -519,6 +603,36 @@ const liveCurvePointsSafe: CurveTradePoint[] = Array.isArray(liveCurvePoints) ? 
       cancelled = true;
     };
   }, [wallet.provider, campaign?.campaign]);
+
+  // Campaign activity counters (buy/sell volume, buyers). Used for Flywheel and related panels.
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadActivity = async () => {
+      try {
+        if (USE_MOCK_DATA) {
+          setActivity(null);
+          return;
+        }
+        if (!campaign?.campaign) {
+          setActivity(null);
+          return;
+        }
+        const a = await fetchCampaignActivity(campaign.campaign);
+        if (!cancelled) setActivity(a);
+      } catch (e) {
+        console.warn("[TokenDetails] Failed to load campaign activity", e);
+        if (!cancelled) setActivity(null);
+      }
+    };
+
+    loadActivity();
+    const t = setInterval(loadActivity, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [campaign?.campaign, fetchCampaignActivity]);
 
   // Wallet balances (for the trading panel)
   useEffect(() => {
@@ -752,6 +866,39 @@ const liveCurvePointsSafe: CurveTradePoint[] = Array.isArray(liveCurvePoints) ? 
   const { url: chartUrl, baseUrl: dexBaseUrl, liquidityBnb: dexLiquidityBnb } =
     useDexScreenerChart(dexTokenAddress);
   const isDexStage = !isCurveTestToken && isGraduated;
+
+  const curveProgress = useMemo(() => {
+    // Bonding curve progress: sold / graduation target. When in dex stage, treat as 100%.
+    if (isDexStage) {
+      return {
+        pct: 100,
+        soldWei: metrics?.sold ?? null,
+        targetWei: metrics?.graduationTarget ?? null,
+        matured: true,
+      };
+    }
+
+    const sold = metrics?.sold ?? 0n;
+    const target = metrics?.graduationTarget ?? 0n;
+    if (target <= 0n) {
+      return {
+        pct: 0,
+        soldWei: metrics?.sold ?? null,
+        targetWei: metrics?.graduationTarget ?? null,
+        matured: false,
+      };
+    }
+
+    const pctBps = (sold * 10000n) / target; // two decimals
+    const pct = Math.max(0, Math.min(100, Number(pctBps) / 100));
+
+    return {
+      pct,
+      soldWei: sold,
+      targetWei: target,
+      matured: sold >= target,
+    };
+  }, [isDexStage, metrics?.sold, metrics?.graduationTarget]);
 
   const liquidityLabel = isDexStage ? "Liquidity" : "Reserve";
   const liquidityValue = (() => {
@@ -1386,64 +1533,73 @@ const liveCurvePointsSafe: CurveTradePoint[] = Array.isArray(liveCurvePoints) ? 
             </div>
           </Card>
 
-          {/* Transactions Table */}
-          <Card className="bg-card/30 backdrop-blur-md rounded-2xl border border-border p-4 flex flex-col min-h-0" style={{ flex: "1" }}>
-            <div className="overflow-auto flex-1">
-              <table className="w-full text-[11px]">
-                <thead className="sticky top-0 bg-card/95 backdrop-blur">
-                  <tr className="border-b border-border/50">
-                    <th className="text-left py-1.5 text-muted-foreground font-normal">Time</th>
-                    <th className="text-left py-1.5 text-muted-foreground font-normal">Type</th>
-                    <th className="text-left py-1.5 text-muted-foreground font-normal">{tokenData.ticker}</th>
-                    <th className="text-left py-1.5 text-muted-foreground font-normal">BNB</th>
-                    <th className="text-left py-1.5 text-muted-foreground font-normal">Price</th>
-                    <th className="hidden lg:table-cell text-left py-1.5 text-muted-foreground font-normal">MCap</th>
-                    <th className="hidden md:table-cell text-left py-1.5 text-muted-foreground font-normal">Trader</th>
-                    <th className="text-left py-1.5 text-muted-foreground font-normal">TX</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {txs.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} className="py-6 text-center text-muted-foreground">
-                        No trades yet.
-                      </td>
+          {/* Activity: Comments / Trades */}
+        <Card className="bg-muted/50 border-muted/50 rounded-3xl shadow-sm p-5 min-h-0 flex flex-col" style={{ flex: "1" }}>
+          <Tabs
+            value={activityTab}
+            onValueChange={(v) => setActivityTab(v as any)}
+            className="h-full flex flex-col min-h-0"
+          >
+            <TabsList className="grid w-full grid-cols-2 mb-3">
+              <TabsTrigger value="comments">Comments</TabsTrigger>
+              <TabsTrigger value="trades">Trades</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="comments" className="flex-1 min-h-0 overflow-hidden">
+              {campaign?.campaign ? (
+                <TokenComments
+                  chainId={Number(wallet.chainId ?? 97)}
+                  campaignAddress={campaign.campaign}
+                  tokenAddress={campaign.token}
+                />
+              ) : (
+                <div className="text-sm text-muted-foreground">Loading comments…</div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="trades" className="flex-1 min-h-0 overflow-hidden">
+              <div className="overflow-auto h-full">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Type</th>
+                      <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Time</th>
+                      <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Amount</th>
+                      <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Price</th>
+                      <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">MCap</th>
+                      <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Maker</th>
                     </tr>
-                  ) : (
-                    txs.map((tx, i) => (
-                      <tr key={i} className="border-b border-border/50 hover:bg-muted/20">
-                        <td className="py-1.5 text-muted-foreground">{tx.time}</td>
-                        <td className={`py-1.5 ${tx.type === "buy" ? "text-green-500" : "text-red-500"}`}>
-                          {tx.type.toUpperCase()}
+                  </thead>
+                  <tbody>
+                    {txs.map((tx) => (
+                      <tr key={tx.id} className="border-b border-border/50">
+                        <td className="py-3 px-2">
+                          <span className={`text-sm ${tx.type === "buy" ? "text-green-500" : "text-red-500"}`}>
+                            {tx.type.toUpperCase()}
+                          </span>
                         </td>
-                        <td className="py-1.5 font-mono">{tx.amount}</td>
-                        <td className="py-1.5 font-mono">{tx.bnb}</td>
-                        <td className="py-1.5 font-mono">{tx.price}</td>
-                        <td className="hidden lg:table-cell py-1.5 font-mono">{tx.mcap}</td>
-                        <td className="hidden md:table-cell py-1.5 font-mono">{tx.trader}</td>
-                        <td className="py-1.5">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-5 w-5"
-                            onClick={() => {
-                              if (!tx.tx) return;
-                              const base = wallet.chainId === 97
-                                ? "https://testnet.bscscan.com/tx/"
-                                : "https://bscscan.com/tx/";
-                              window.open(`${base}${tx.tx}`, "_blank", "noopener,noreferrer");
-                            }}
-                          >
-                            <ExternalLink className="h-3 w-3" />
-                          </Button>
+                        <td className="py-3 px-2 text-sm text-muted-foreground">{tx.time}</td>
+                        <td className="py-3 px-2 text-sm text-foreground">{tx.amount}</td>
+                        <td className="py-3 px-2 text-sm text-foreground">{tx.price}</td>
+                        <td className="py-3 px-2 text-sm text-foreground">{tx.mcap}</td>
+                        <td className="py-3 px-2">
+                          <span className="text-sm text-muted-foreground font-mono">{tx.maker}</span>
                         </td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+                    ))}
+                    {txs.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="py-6 text-center text-sm text-muted-foreground">
+                          No trades yet.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </TabsContent>
+          </Tabs>
+        </Card>
         </div>
 
         {/* Right Column - Trading Panel & Stats (1/3 width) */}
@@ -1603,54 +1759,103 @@ const liveCurvePointsSafe: CurveTradePoint[] = Array.isArray(liveCurvePoints) ? 
             </Tabs>
           </Card>
 
-          {/* User Statistics - 2/5 height */}
-          <Card className="bg-card/30 backdrop-blur-md rounded-2xl border border-border p-4" style={{ flex: "2" }}>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-retro text-foreground">Flywheel statistics</h3>
-              <div className="flex gap-2">
-                <Button variant="ghost" size="icon" className="h-6 w-6">
-                  <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                    <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    <path d="M9 12l2 2 4-4" />
-                  </svg>
-                </Button>
-                <span className="text-xs text-muted-foreground">Share</span>
+          <Card className="bg-muted/50 border-muted/50 rounded-3xl shadow-sm p-5 min-h-0 flex flex-col gap-3" style={{ flex: "1" }}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold">Bonding curve progress</h3>
+              <span className="text-xs text-muted-foreground">{curveProgress.matured ? "Matured" : `${curveProgress.pct.toFixed(2)}%`}</span>
+            </div>
+            <Progress value={curveProgress.pct} className="h-2" />
+            <div className="text-xs text-muted-foreground flex items-center justify-between">
+              <span>Sold: {formatTokenFromWei(curveProgress.soldWei ?? undefined)}</span>
+              <span>Target: {formatTokenFromWei(curveProgress.targetWei ?? undefined)}</span>
+            </div>
+            <p className="text-xs text-muted-foreground">Full bar means the bonding curve has graduated and liquidity is on DEX.</p>
+          </Card>
+
+          {/* Flywheel Statistics - 2/5 height */}
+          <Card
+            className="bg-card/30 backdrop-blur-md rounded-2xl border border-border p-4 min-h-0 flex flex-col"
+            style={{ flex: "2" }}
+          >
+            <div className="flex items-center justify-between mb-3 flex-shrink-0">
+              <h3 className="text-sm font-retro text-foreground">Flywheel</h3>
+              <span className="text-xs text-muted-foreground">All-time</span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-2xl border border-border bg-muted/20 p-3">
+                <p className="text-xs text-muted-foreground">Buy volume</p>
+                <p className="text-lg font-retro text-foreground">{flywheel.buyVolume}</p>
+              </div>
+              <div className="rounded-2xl border border-border bg-muted/20 p-3">
+                <p className="text-xs text-muted-foreground">Sell volume</p>
+                <p className="text-lg font-retro text-foreground">{flywheel.sellVolume}</p>
+              </div>
+              <div className="rounded-2xl border border-border bg-muted/20 p-3">
+                <p className="text-xs text-muted-foreground">Net flow</p>
+                <p className="text-lg font-retro text-foreground">{flywheel.netFlow}</p>
+              </div>
+              <div className="rounded-2xl border border-border bg-muted/20 p-3">
+                <p className="text-xs text-muted-foreground">Protocol fees (est.)</p>
+                <p className="text-lg font-retro text-foreground">{flywheel.protocolFeesEst}</p>
+              </div>
+              <div className="rounded-2xl border border-border bg-muted/20 p-3">
+                <p className="text-xs text-muted-foreground">Buyers</p>
+                <p className="text-lg font-retro text-foreground">{flywheel.buyers}</p>
+              </div>
+              <div className="rounded-2xl border border-border bg-muted/20 p-3">
+                <p className="text-xs text-muted-foreground">Protocol fee rate</p>
+                <p className="text-lg font-retro text-foreground">{flywheel.protocolFeeRate}</p>
               </div>
             </div>
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 text-xs">
-                <div className="w-8 h-4 bg-accent rounded-full" />
-                <span className="text-muted-foreground">Invested</span>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">Invested</p>
-                  <p className="text-xl font-retro text-foreground">$0</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">Tokens burned</p>
-                  <p className="text-xl font-retro text-foreground flex items-center gap-1">
-                    0.000%
-                    <span className="text-xs text-muted-foreground">${tokenData.ticker}</span>
-                  </p>
-                </div>
-              </div>
-            </div>
+
+            <p className="text-xs text-muted-foreground mt-3">
+              Volumes and buyer count come from on-chain counters when available. Fees are estimated from protocol fee basis points.
+            </p>
           </Card>
 
           {/* Holder Distribution - 1/5 height */}
-          <Card className="bg-card/30 backdrop-blur-md rounded-2xl border border-border p-4 flex flex-col min-h-0" style={{ flex: "1" }}>
-            <h3 className="text-sm font-retro text-foreground mb-3 flex-shrink-0">Holder Distribution</h3>
-            <div className="space-y-2 overflow-auto flex-1">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-mono">1. 42me...</span>
-                <span className="font-mono text-muted-foreground">100.000%</span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-mono">2. Bzdb... 🔥 (DEV)</span>
-                <span className="font-mono text-muted-foreground">0.000%</span>
-              </div>
+          <Card
+            className="bg-card/30 backdrop-blur-md rounded-2xl border border-border p-4 flex flex-col min-h-0"
+            style={{ flex: "1" }}
+          >
+            <div className="flex items-center justify-between mb-3 flex-shrink-0">
+              <h3 className="text-sm font-retro text-foreground">Holder Distribution</h3>
+              <span className="text-xs text-muted-foreground">
+                {holderDistribution.totalHolders} holders
+              </span>
             </div>
+
+            {holderDistribution.top.length ? (
+              <div className="space-y-3 overflow-auto flex-1 pr-1">
+                {holderDistribution.top.map((h, idx) => (
+                  <div key={h.address} className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-mono">
+                        {idx + 1}. {h.label}
+                      </span>
+                      <span className="font-mono text-muted-foreground">{h.pct.toFixed(2)}%</span>
+                    </div>
+                    <Progress value={h.pct} className="h-1.5" />
+                  </div>
+                ))}
+                {holderDistribution.othersPct > 0 ? (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-mono">Others</span>
+                      <span className="font-mono text-muted-foreground">{holderDistribution.othersPct.toFixed(2)}%</span>
+                    </div>
+                    <Progress value={holderDistribution.othersPct} className="h-1.5" />
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground">No holder data yet.</div>
+            )}
+
+            <p className="text-[11px] text-muted-foreground mt-3 flex-shrink-0">
+              Estimated from bonding-curve trades (excludes transfers).
+            </p>
           </Card>
         </div>
       </div>
