@@ -1525,10 +1525,8 @@ setTxs(next);
           </Card>
 
           {/* Chart */}
-          <Card
-            className="bg-card/30 backdrop-blur-md rounded-2xl border border-border p-0 overflow-hidden flex flex-col min-h-[320px]"
-            style={{ flex: isMobile ? "3" : "2" }}
-          >
+          <Card className="bg-muted/50 border-muted/50 rounded-3xl shadow-sm p-5">
+
             <div className="flex items-center justify-between px-4 py-2 border-b border-border/40 bg-card/20">
               <div className="flex items-center gap-2 min-w-0">
                 <span className="text-xs text-muted-foreground">{chartTitle}</span>
