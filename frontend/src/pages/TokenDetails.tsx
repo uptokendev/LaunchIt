@@ -1819,7 +1819,7 @@ setTxs(next);
             </Tabs>
           </Card>
 
-          <Card className="bg-muted/50 border-muted/50 rounded-3xl shadow-sm p-5 min-h-0 flex flex-col gap-3" style={{ flex: "1" }}>
+          <Card className="bg-muted/50 border-muted/50 rounded-3xl shadow-sm p-5">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold">Bonding curve progress</h3>
               <span className="text-xs text-muted-foreground">{curveProgress.matured ? "Matured" : `${curveProgress.pct.toFixed(2)}%`}</span>
