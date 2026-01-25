@@ -1591,7 +1591,7 @@ setTxs(next);
           </Card>
 
           {/* Activity: Comments / Trades */}
-        <Card className="bg-muted/50 border-muted/50 rounded-3xl shadow-sm p-5 min-h-0 flex flex-col" style={{ flex: "1" }}>
+        <Card className="bg-muted/50 border-muted/50 rounded-3xl shadow-sm p-5 overflow-y-auto min-h-0 flex flex-col" style={{ flex: "1" }}>
           <Tabs
             value={activityTab}
             onValueChange={(v) => setActivityTab(v as any)}
