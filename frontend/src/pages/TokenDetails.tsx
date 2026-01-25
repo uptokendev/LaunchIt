@@ -1851,9 +1851,7 @@ setTxs(next);
 
           {/* Flywheel Statistics - 2/5 height */}
           <Card
-            className="bg-card/30 backdrop-blur-md rounded-2xl border border-border p-4 min-h-0 flex flex-col"
-            style={{ flex: "2" }}
-          >
+            className="bg-muted/50 border-muted/50 rounded-3xl shadow-sm p-5">
             <div className="flex items-center justify-between mb-3 flex-shrink-0">
               <h3 className="text-sm font-retro text-foreground">Flywheel</h3>
               <span className="text-xs text-muted-foreground">All-time</span>
@@ -1893,7 +1891,7 @@ setTxs(next);
 
           {/* Holder Distribution - 1/5 height */}
           <Card
-            className="bg-card/30 backdrop-blur-md rounded-2xl border border-border p-4">
+            className="bg-muted/50 border-muted/50 rounded-3xl shadow-sm p-5">
             <div className="flex items-center justify-between mb-3 flex-shrink-0">
               <h3 className="text-sm font-retro text-foreground">Holder Distribution</h3>
               <span className="text-xs text-muted-foreground">
