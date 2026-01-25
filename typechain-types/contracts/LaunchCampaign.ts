@@ -94,6 +94,7 @@ export interface LaunchCampaignInterface extends Interface {
     nameOrSignature:
       | "basePrice"
       | "buyExactTokens"
+      | "buyExactTokensFor"
       | "buyersCount"
       | "creatorReserve"
       | "currentPrice"
@@ -140,6 +141,10 @@ export interface LaunchCampaignInterface extends Interface {
   encodeFunctionData(
     functionFragment: "buyExactTokens",
     values: [BigNumberish, BigNumberish]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "buyExactTokensFor",
+    values: [AddressLike, BigNumberish, BigNumberish]
   ): string;
   encodeFunctionData(
     functionFragment: "buyersCount",
@@ -243,6 +248,10 @@ export interface LaunchCampaignInterface extends Interface {
   decodeFunctionResult(functionFragment: "basePrice", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "buyExactTokens",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "buyExactTokensFor",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
@@ -461,6 +470,12 @@ export interface LaunchCampaign extends BaseContract {
     "payable"
   >;
 
+  buyExactTokensFor: TypedContractMethod<
+    [recipient: AddressLike, amountOut: BigNumberish, maxCost: BigNumberish],
+    [bigint],
+    "payable"
+  >;
+
   buyersCount: TypedContractMethod<[], [bigint], "view">;
 
   creatorReserve: TypedContractMethod<[], [bigint], "view">;
@@ -556,6 +571,13 @@ export interface LaunchCampaign extends BaseContract {
     nameOrSignature: "buyExactTokens"
   ): TypedContractMethod<
     [amountOut: BigNumberish, maxCost: BigNumberish],
+    [bigint],
+    "payable"
+  >;
+  getFunction(
+    nameOrSignature: "buyExactTokensFor"
+  ): TypedContractMethod<
+    [recipient: AddressLike, amountOut: BigNumberish, maxCost: BigNumberish],
     [bigint],
     "payable"
   >;

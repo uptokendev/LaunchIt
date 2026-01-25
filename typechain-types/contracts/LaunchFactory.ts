@@ -63,6 +63,7 @@ export declare namespace LaunchFactory {
     priceSlope: BigNumberish;
     graduationTarget: BigNumberish;
     lpReceiver: AddressLike;
+    initialBuyTokens: BigNumberish;
   };
 
   export type CampaignRequestStructOutput = [
@@ -75,7 +76,8 @@ export declare namespace LaunchFactory {
     basePrice: bigint,
     priceSlope: bigint,
     graduationTarget: bigint,
-    lpReceiver: string
+    lpReceiver: string,
+    initialBuyTokens: bigint
   ] & {
     name: string;
     symbol: string;
@@ -87,6 +89,7 @@ export declare namespace LaunchFactory {
     priceSlope: bigint;
     graduationTarget: bigint;
     lpReceiver: string;
+    initialBuyTokens: bigint;
   };
 
   export type CampaignInfoStruct = {
@@ -138,6 +141,7 @@ export interface LaunchFactoryInterface extends Interface {
       | "getCampaignPage"
       | "owner"
       | "protocolFeeBps"
+      | "quoteInitialBuyTotal"
       | "renounceOwnership"
       | "router"
       | "setConfig"
@@ -182,6 +186,10 @@ export interface LaunchFactoryInterface extends Interface {
   encodeFunctionData(
     functionFragment: "protocolFeeBps",
     values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "quoteInitialBuyTotal",
+    values: [BigNumberish, BigNumberish, BigNumberish]
   ): string;
   encodeFunctionData(
     functionFragment: "renounceOwnership",
@@ -233,6 +241,10 @@ export interface LaunchFactoryInterface extends Interface {
   decodeFunctionResult(functionFragment: "owner", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "protocolFeeBps",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "quoteInitialBuyTotal",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
@@ -412,7 +424,7 @@ export interface LaunchFactory extends BaseContract {
   createCampaign: TypedContractMethod<
     [req: LaunchFactory.CampaignRequestStruct],
     [[string, string] & { campaignAddr: string; tokenAddr: string }],
-    "nonpayable"
+    "payable"
   >;
 
   feeRecipient: TypedContractMethod<[], [string], "view">;
@@ -432,6 +444,16 @@ export interface LaunchFactory extends BaseContract {
   owner: TypedContractMethod<[], [string], "view">;
 
   protocolFeeBps: TypedContractMethod<[], [bigint], "view">;
+
+  quoteInitialBuyTotal: TypedContractMethod<
+    [
+      initialBuyTokens: BigNumberish,
+      basePriceOverride: BigNumberish,
+      priceSlopeOverride: BigNumberish
+    ],
+    [bigint],
+    "view"
+  >;
 
   renounceOwnership: TypedContractMethod<[], [void], "nonpayable">;
 
@@ -496,7 +518,7 @@ export interface LaunchFactory extends BaseContract {
   ): TypedContractMethod<
     [req: LaunchFactory.CampaignRequestStruct],
     [[string, string] & { campaignAddr: string; tokenAddr: string }],
-    "nonpayable"
+    "payable"
   >;
   getFunction(
     nameOrSignature: "feeRecipient"
@@ -521,6 +543,17 @@ export interface LaunchFactory extends BaseContract {
   getFunction(
     nameOrSignature: "protocolFeeBps"
   ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "quoteInitialBuyTotal"
+  ): TypedContractMethod<
+    [
+      initialBuyTokens: BigNumberish,
+      basePriceOverride: BigNumberish,
+      priceSlopeOverride: BigNumberish
+    ],
+    [bigint],
+    "view"
+  >;
   getFunction(
     nameOrSignature: "renounceOwnership"
   ): TypedContractMethod<[], [void], "nonpayable">;

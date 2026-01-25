@@ -6,6 +6,23 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {LaunchCampaign} from "./LaunchCampaign.sol";
 
 contract LaunchFactory is Ownable {
+    // Custom errors to reduce deployed bytecode size (BSC testnet enforces the 24KB limit).
+    error RouterZero();
+    error NameEmpty();
+    error SymbolEmpty();
+    error LogoEmpty();
+    error InitBuyValue();
+    error RefundFail();
+    error RecipientZero();
+    error FeeTooHigh();
+    error OutOfBounds();
+    error Offset();
+    error SupplyZero();
+    error InvalidCurveBps();
+    error PriceZero();
+    error SlopeZero();
+    error TargetZero();
+    error LiquidityBps();
     struct LaunchConfig {
         uint256 totalSupply;
         uint256 curveBps;
@@ -66,7 +83,7 @@ contract LaunchFactory is Ownable {
     event ProtocolFeeUpdated(uint256 newFeeBps);
 
     constructor(address router_) Ownable(msg.sender) {
-        require(router_ != address(0), "router zero");
+        if (router_ == address(0)) revert RouterZero();
         router = router_;
         config = LaunchConfig({
             totalSupply: 1_000_000_000 ether,
@@ -107,9 +124,9 @@ contract LaunchFactory is Ownable {
         payable
         returns (address campaignAddr, address tokenAddr)
     {
-        require(bytes(req.name).length > 0, "name");
-        require(bytes(req.symbol).length > 0, "symbol");
-        require(bytes(req.logoURI).length > 0, "logo uri");
+        if (bytes(req.name).length == 0) revert NameEmpty();
+        if (bytes(req.symbol).length == 0) revert SymbolEmpty();
+        if (bytes(req.logoURI).length == 0) revert LogoEmpty();
 
         LaunchCampaign.InitParams memory params = LaunchCampaign.InitParams({
             name: req.name,
@@ -160,11 +177,11 @@ contract LaunchFactory is Ownable {
         // Any extra msg.value is refunded.
         uint256 spent = 0;
         if (req.initialBuyTokens > 0) {
-            uint256 total = LaunchCampaign(campaignAddr).quoteBuyExactTokens(
+            uint256 total = LaunchCampaign(payable(campaignAddr)).quoteBuyExactTokens(
                 req.initialBuyTokens
             );
-            require(msg.value >= total, "INIT_BUY_VALUE");
-            LaunchCampaign(campaignAddr).buyExactTokensFor{value: total}(
+            if (msg.value < total) revert InitBuyValue();
+            LaunchCampaign(payable(campaignAddr)).buyExactTokensFor{value: total}(
                 msg.sender,
                 req.initialBuyTokens,
                 total
@@ -173,7 +190,7 @@ contract LaunchFactory is Ownable {
         }
         if (msg.value > spent) {
             (bool ok, ) = msg.sender.call{value: msg.value - spent}("");
-            require(ok, "REFUND_FAIL");
+            if (!ok) revert RefundFail();
         }
 
         emit CampaignCreated(
@@ -193,19 +210,19 @@ contract LaunchFactory is Ownable {
     }
 
     function setRouter(address newRouter) external onlyOwner {
-        require(newRouter != address(0), "router zero");
+        if (newRouter == address(0)) revert RouterZero();
         router = newRouter;
         emit RouterUpdated(newRouter);
     }
 
     function setFeeRecipient(address newRecipient) external onlyOwner {
-        require(newRecipient != address(0), "recipient zero");
+        if (newRecipient == address(0)) revert RecipientZero();
         feeRecipient = newRecipient;
         emit FeeRecipientUpdated(newRecipient);
     }
 
     function setProtocolFee(uint256 newProtocolFeeBps) external onlyOwner {
-        require(newProtocolFeeBps <= 1000, "fee too high");
+        if (newProtocolFeeBps > 1000) revert FeeTooHigh();
         protocolFeeBps = newProtocolFeeBps;
         emit ProtocolFeeUpdated(newProtocolFeeBps);
     }
@@ -215,7 +232,7 @@ contract LaunchFactory is Ownable {
     }
 
     function getCampaign(uint256 id) external view returns (CampaignInfo memory) {
-        require(id < _campaigns.length, "out of bounds");
+        if (id >= _campaigns.length) revert OutOfBounds();
         return _campaigns[id];
     }
 
@@ -224,7 +241,7 @@ contract LaunchFactory is Ownable {
         view
         returns (CampaignInfo[] memory page)
     {
-        require(offset < _campaigns.length || _campaigns.length == 0, "offset");
+        if (!(_campaigns.length == 0 || offset < _campaigns.length)) revert Offset();
         if (_campaigns.length == 0 || limit == 0) {
             return new CampaignInfo[](0);
         }
@@ -240,15 +257,11 @@ contract LaunchFactory is Ownable {
     }
 
     function _validateConfig(LaunchConfig memory newConfig) internal pure {
-        require(newConfig.totalSupply > 0, "supply zero");
-        require(
-            newConfig.curveBps > 0 &&
-                newConfig.curveBps + newConfig.liquidityTokenBps <= MAX_BPS,
-            "invalid curve bps"
-        );
-        require(newConfig.basePrice > 0, "price zero");
-        require(newConfig.priceSlope > 0, "slope zero");
-        require(newConfig.graduationTarget > 0, "target zero");
-        require(newConfig.liquidityBps <= MAX_BPS, "liquidity bps");
+        if (newConfig.totalSupply == 0) revert SupplyZero();
+        if (!(newConfig.curveBps > 0 && newConfig.curveBps + newConfig.liquidityTokenBps <= MAX_BPS)) revert InvalidCurveBps();
+        if (newConfig.basePrice == 0) revert PriceZero();
+        if (newConfig.priceSlope == 0) revert SlopeZero();
+        if (newConfig.graduationTarget == 0) revert TargetZero();
+        if (newConfig.liquidityBps > MAX_BPS) revert LiquidityBps();
     }
 }

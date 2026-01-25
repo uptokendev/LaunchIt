@@ -3,6 +3,8 @@
 /* eslint-disable */
 export * as interfaces from "./interfaces";
 export * as mocks from "./mocks";
+export * as test from "./test";
 export * as token from "./token";
 export { LaunchCampaign__factory } from "./LaunchCampaign__factory";
 export { LaunchFactory__factory } from "./LaunchFactory__factory";
+export { LpTimelock__factory } from "./LpTimelock__factory";

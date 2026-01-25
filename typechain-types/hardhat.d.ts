@@ -74,9 +74,21 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.LaunchFactory__factory>;
     getContractFactory(
+      name: "LpTimelock",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.LpTimelock__factory>;
+    getContractFactory(
+      name: "MockERC20",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.MockERC20__factory>;
+    getContractFactory(
       name: "MockRouter",
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.MockRouter__factory>;
+    getContractFactory(
+      name: "FactoryCaller",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.FactoryCaller__factory>;
     getContractFactory(
       name: "LaunchToken",
       signerOrOptions?: ethers.Signer | FactoryOptions
@@ -158,10 +170,25 @@ declare module "hardhat/types/runtime" {
       signer?: ethers.Signer
     ): Promise<Contracts.LaunchFactory>;
     getContractAt(
+      name: "LpTimelock",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.LpTimelock>;
+    getContractAt(
+      name: "MockERC20",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.MockERC20>;
+    getContractAt(
       name: "MockRouter",
       address: string | ethers.Addressable,
       signer?: ethers.Signer
     ): Promise<Contracts.MockRouter>;
+    getContractAt(
+      name: "FactoryCaller",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.FactoryCaller>;
     getContractAt(
       name: "LaunchToken",
       address: string | ethers.Addressable,
@@ -229,9 +256,21 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.LaunchFactory>;
     deployContract(
+      name: "LpTimelock",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.LpTimelock>;
+    deployContract(
+      name: "MockERC20",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.MockERC20>;
+    deployContract(
       name: "MockRouter",
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.MockRouter>;
+    deployContract(
+      name: "FactoryCaller",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.FactoryCaller>;
     deployContract(
       name: "LaunchToken",
       signerOrOptions?: ethers.Signer | DeployContractOptions
@@ -313,10 +352,25 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.LaunchFactory>;
     deployContract(
+      name: "LpTimelock",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.LpTimelock>;
+    deployContract(
+      name: "MockERC20",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.MockERC20>;
+    deployContract(
       name: "MockRouter",
       args: any[],
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.MockRouter>;
+    deployContract(
+      name: "FactoryCaller",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.FactoryCaller>;
     deployContract(
       name: "LaunchToken",
       args: any[],

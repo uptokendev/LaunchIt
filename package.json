@@ -1,39 +1,23 @@
 {
-  "name": "UPMEME",
+  "name": "launchit-bonding-curve-tests",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "private": true,
   "scripts": {
-    "clean": "hardhat clean",
-    "build": "hardhat compile",
-    "compile": "hardhat compile && node scripts/sync-abis.mjs",
+    "compile": "hardhat compile",
     "test": "hardhat test",
-    "frontend": "npm --prefix frontend run dev",
-    "frontend:build": "npm --prefix frontend run build",
-    "indexer": "node scripts/indexer/run.js"
+    "coverage": "hardhat coverage",
+    "gas": "REPORT_GAS=true hardhat test"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/uptokendev/UPMEME.git"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "bugs": {
-    "url": "https://github.com/uptokendev/UPMEME/issues"
-  },
-  "homepage": "https://github.com/uptokendev/UPMEME#readme",
   "devDependencies": {
-    "@nomicfoundation/hardhat-toolbox": "^6.1.0",
-    "@types/node": "^24.10.1",
-    "hardhat": "^2.26.1",
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "hardhat": "^2.22.10",
+    "hardhat-gas-reporter": "^1.0.10",
+    "solidity-coverage": "^0.8.5",
+    "typescript": "^5.4.5",
     "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
+    "dotenv": "^16.4.5"
   },
   "dependencies": {
-    "@openzeppelin/contracts": "^5.4.0",
-    "dotenv": "^17.2.3",
-    "pg": "^8.16.3",
-    "psql": "^0.0.1"
+    "@openzeppelin/contracts": "^5.0.2"
   }
 }

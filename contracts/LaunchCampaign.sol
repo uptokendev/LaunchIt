@@ -298,7 +298,7 @@ if (!hasBought[msg.sender]) {
         // Bonding-curve fees apply only pre-launch. Once liquidity is seeded on the DEX,
         // this campaign no longer executes trades and the protocol fee should be considered off.
         // (Also protects against any future code-paths that might read protocolFeeBps post-launch.)
-        protocolFeeBps = 0;
+        // protocolFeeBps = 0;
 
         uint256 remainingAfterFee = address(this).balance;
         uint256 liquidityValue = (remainingAfterFee * liquidityBps) / MAX_BPS;
