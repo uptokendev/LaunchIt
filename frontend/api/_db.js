@@ -47,9 +47,20 @@ if (!_pool) {
   const { host, port, user, password, database } = parseDbUrl(DATABASE_URL);
   const ca = loadOptionalCaPem();
   const sslDisabled = String(process.env.PG_DISABLE_SSL || "").trim() === "1";
+  // Some serverless/container environments ship with a minimal CA bundle.
+  // If you hit SELF_SIGNED_CERT_IN_CHAIN when connecting to Supabase pooler,
+  // set PG_SSL_ALLOW_SELF_SIGNED=1 to keep TLS on but skip certificate verification.
+  const allowSelfSigned = String(process.env.PG_SSL_ALLOW_SELF_SIGNED || "").trim() === "1";
 
   console.log("[api/_db] PG host:", host, "port:", port, "db:", database);
-  console.log("[api/_db] CA loaded:", Boolean(ca), "CA bytes:", ca ? ca.length : 0);
+  console.log(
+    "[api/_db] CA loaded:",
+    Boolean(ca),
+    "CA bytes:",
+    ca ? ca.length : 0,
+    "allowSelfSigned:",
+    allowSelfSigned
+  );
 
   _pool = new Pool({
     host,
@@ -62,7 +73,9 @@ if (!_pool) {
       ? false
       : ca
         ? { ca, rejectUnauthorized: true, servername: host }
-        : { rejectUnauthorized: true, servername: host },
+        : allowSelfSigned
+          ? { rejectUnauthorized: false, servername: host }
+          : { rejectUnauthorized: true, servername: host },
 
     max: 2,
     idleTimeoutMillis: 30_000,

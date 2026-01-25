@@ -100,11 +100,14 @@ async function pgCheck() {
   }
 
   const sslDisabled = String(process.env.PG_DISABLE_SSL || "").trim() === "1";
+  const allowSelfSigned = String(process.env.PG_SSL_ALLOW_SELF_SIGNED || "").trim() === "1";
   const ssl = sslDisabled
     ? false
     : ca
       ? { ca, rejectUnauthorized: true, servername: host }
-      : { rejectUnauthorized: true, servername: host };
+      : allowSelfSigned
+        ? { rejectUnauthorized: false, servername: host }
+        : { rejectUnauthorized: true, servername: host };
 
   const pool = new Pool({
     connectionString: DATABASE_URL,
