@@ -1271,7 +1271,7 @@ setTxs(next);
   }
 
   return (
-    <div className="h-full w-full overflow-hidden flex flex-col px-3 md:px-6 pt-3 md:pt-6 gap-3 md:gap-4">
+    <div className="h-full w-full overflow-y-auto flex flex-col px-3 md:px-6 pt-3 md:pt-6 gap-3 md:gap-4">
       {/* Main Content - Single Row */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-3 md:gap-4 flex-1 min-h-0">
         {/* Left Column - Header, Chart & Transactions (3/4 width) */}
@@ -1602,7 +1602,7 @@ setTxs(next);
               <TabsTrigger value="trades">Trades</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="comments" className="flex-1 min-h-0 overflow-hidden">
+            <TabsContent value="comments" className="flex-1 min-h-0 overflow-y-auto">
               {campaign?.campaign ? (
                 <TokenComments
                   chainId={Number(wallet.chainId ?? 97)}
@@ -1614,7 +1614,7 @@ setTxs(next);
               )}
             </TabsContent>
 
-            <TabsContent value="trades" className="flex-1 min-h-0 overflow-hidden">
+            <TabsContent value="trades" className="flex-1 min-h-0 overflow-y-auto">
               <div className="overflow-auto h-full">
                 <table className="w-full">
                   <thead>
@@ -1901,7 +1901,7 @@ setTxs(next);
             </div>
 
             {holderDistribution.top.length ? (
-              <div className="space-y-3 overflow-auto flex-1 pr-1">
+              <div className="space-y-3 overflow-auto flex-1 min-h-0 pr-1">
                 {holderDistribution.top.map((h, idx) => {
                   const rank = h.isLp ? null : holderDistribution.hasLp ? idx : idx + 1;
 
