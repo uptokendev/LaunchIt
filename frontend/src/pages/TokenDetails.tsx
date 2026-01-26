@@ -1592,7 +1592,7 @@ setTxs(next);
           </Card>
 
           {/* Activity: Comments / Trades */}
-        <Card className="bg-muted/50 border-muted/50 rounded-3xl shadow-sm p-5 min-h-0 flex flex-col" style={{ flex: "1" }}>
+        <Card className="bg-card/30 backdrop-blur-md rounded-2xl border border-border p-4">
           <Tabs
             value={activityTab}
             onValueChange={(v) => setActivityTab(v as any)}
