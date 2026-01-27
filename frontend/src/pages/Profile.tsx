@@ -555,7 +555,7 @@ const Profile = () => {
   }, [created]);
 
   return (
-        <div className="w-full min-h-[100dvh] pt-20 md:pt-24 lg:pt-24 pl-0 lg:pl-0 overflow-y-auto">
+        <div className="w-full min-h-[100dvh] pt-16 md:pt-24 lg:pt-24 pl-0 lg:pl-0 overflow-y-auto">
       {/* Disconnect Overlay */}
       {!isConnected && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-sm">
