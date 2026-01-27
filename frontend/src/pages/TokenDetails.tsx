@@ -30,6 +30,7 @@ import { useCurveTrades, type CurveTradePoint } from "@/hooks/useCurveTrades";
 import { Contract, ethers } from "ethers";
 import LaunchCampaignArtifact from "@/abi/LaunchCampaign.json";
 import LaunchTokenArtifact from "@/abi/LaunchToken.json";
+import { fetchUserProfile, type UserProfile } from "@/lib/profileApi";
 
 const CAMPAIGN_ABI = LaunchCampaignArtifact.abi as ethers.InterfaceAbi;
 const TOKEN_ABI = LaunchTokenArtifact.abi as ethers.InterfaceAbi;
@@ -47,8 +48,17 @@ type TxRow = {
   price: string;
   mcap: string;
   maker: string;
+  makerAddress: string;
   txHash: string;
 };
+
+function getExplorerBase(chainId?: number): string {
+  const id = Number(chainId ?? 0);
+  if (id === 56) return "https://bscscan.com";
+  if (id === 97) return "https://testnet.bscscan.com";
+  // Sensible default
+  return "https://bscscan.com";
+}
 
 const TokenDetails = () => {
   // URL param: /token/:campaignAddress  (address-based)
@@ -102,6 +112,9 @@ const TokenDetails = () => {
   // UI rows for the transactions table
   const [txs, setTxs] = useState<TxRow[]>([]);
 
+  // Maker profiles for the Trades tab (best-effort; cached per address)
+  const [makerProfiles, setMakerProfiles] = useState<Record<string, UserProfile | null>>({});
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -113,6 +126,41 @@ const TokenDetails = () => {
   const [approvePending, setApprovePending] = useState(false);
   const [bnbBalanceWei, setBnbBalanceWei] = useState<bigint | null>(null);
   const [tokenBalanceWei, setTokenBalanceWei] = useState<bigint | null>(null);
+
+  // Fetch maker profiles for displayed trades (best-effort; do not block UI)
+  useEffect(() => {
+    const chainIdNum = Number(wallet.chainId ?? 97);
+    if (!txs.length) return;
+
+    const uniq = Array.from(
+      new Set(
+        txs
+          .map((t) => (t.makerAddress ? String(t.makerAddress).toLowerCase() : ""))
+          .filter(Boolean)
+      )
+    );
+
+    const missing = uniq.filter((a) => makerProfiles[a] === undefined).slice(0, 30);
+    if (!missing.length) return;
+
+    let cancelled = false;
+    (async () => {
+      for (const addr of missing) {
+        try {
+          const p = await fetchUserProfile(chainIdNum, addr);
+          if (cancelled) return;
+          setMakerProfiles((prev) => ({ ...prev, [addr]: p }));
+        } catch {
+          if (cancelled) return;
+          setMakerProfiles((prev) => ({ ...prev, [addr]: null }));
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [txs, wallet.chainId, makerProfiles]);
 
   // Load campaign + metrics based on :campaignAddress (preferred).
   // Backward-compatible fallback: if param is not a 0x address, treat it as symbol.
@@ -805,6 +853,7 @@ return {
   price: priceStr,
   mcap,
   maker: shorten(p.trader),
+  makerAddress: String(p.trader ?? ""),
   txHash,
 };
           });
@@ -864,6 +913,7 @@ return {
   price: priceStr,
   mcap,
   maker: shorten(p.trader),
+  makerAddress: String(p.trader ?? ""),
   txHash,
 };
         });
@@ -899,6 +949,7 @@ return {
       price: priceStr,
       mcap,
       maker: shorten(p.from),
+      makerAddress: String(p.from ?? ""),
       txHash,
     };
   });
@@ -1674,34 +1725,90 @@ style={!isMobile ? { flex: "2" } : undefined}
 
             <TabsContent value="trades" className="flex-1 min-h-0 overflow-y-auto">
               <div className="overflow-auto h-full">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-border">
-                      <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Type</th>
-                      <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Time</th>
-                      <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Amount</th>
-                      <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Price</th>
-                      <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">MCap</th>
-                      <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Maker</th>
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-card/60 backdrop-blur border-b border-border">
+                    <tr>
+                      <th className="text-left py-3 px-3 font-medium text-muted-foreground">Account</th>
+                      <th className="text-left py-3 px-3 font-medium text-muted-foreground">Type</th>
+                      <th className="text-left py-3 px-3 font-medium text-muted-foreground">Amount (BNB)</th>
+                      <th className="text-left py-3 px-3 font-medium text-muted-foreground">Amount ({tokenData.ticker})</th>
+                      <th className="text-left py-3 px-3 font-medium text-muted-foreground">Time</th>
+                      <th className="text-right py-3 px-3 font-medium text-muted-foreground">Txn</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {txs.map((tx) => (
-                      <tr key={tx.id} className="border-b border-border/50">
-                        <td className="py-3 px-2">
-                          <span className={`text-sm ${tx.type === "buy" ? "text-green-500" : "text-red-500"}`}>
-                            {tx.type.toUpperCase()}
-                          </span>
-                        </td>
-                        <td className="py-3 px-2 text-sm text-muted-foreground">{tx.time}</td>
-                        <td className="py-3 px-2 text-sm text-foreground">{tx.amount}</td>
-                        <td className="py-3 px-2 text-sm text-foreground">{tx.price}</td>
-                        <td className="py-3 px-2 text-sm text-foreground">{tx.mcap}</td>
-                        <td className="py-3 px-2">
-                          <span className="text-sm text-muted-foreground font-mono">{tx.maker}</span>
-                        </td>
-                      </tr>
-                    ))}
+                    {txs.map((tx) => {
+                      const addr = (tx.makerAddress || "").toLowerCase();
+                      const prof = addr ? makerProfiles[addr] : null;
+                      const avatar = prof?.avatarUrl || "/placeholder.svg";
+                      const label = (prof?.displayName && prof.displayName.trim().length)
+                        ? prof.displayName.trim()
+                        : tx.maker;
+
+                      const explorer = getExplorerBase(wallet.chainId);
+                      const txLabel = tx.txHash ? `${tx.txHash.slice(0, 6)}…${tx.txHash.slice(-4)}` : "—";
+                      const txUrl = tx.txHash ? `${explorer}/tx/${tx.txHash}` : "";
+
+                      return (
+                        <tr key={tx.id} className="border-b border-border/40 hover:bg-muted/20">
+                          <td className="py-3 px-3">
+                            {tx.makerAddress ? (
+                              <Link
+                                to={`/profile?address=${tx.makerAddress}`}
+                                className="flex items-center gap-2 min-w-0"
+                              >
+                                <img
+                                  src={avatar}
+                                  alt={label}
+                                  onError={(e) => {
+                                    (e.currentTarget as HTMLImageElement).src = "/placeholder.svg";
+                                  }}
+                                  className="h-7 w-7 rounded-full ring-1 ring-border/30 flex-shrink-0"
+                                />
+                                <span className="font-mono text-foreground truncate max-w-[140px]">
+                                  {label}
+                                </span>
+                              </Link>
+                            ) : (
+                              <span className="font-mono text-muted-foreground">—</span>
+                            )}
+                          </td>
+
+                          <td className="py-3 px-3">
+                            <span
+                              className={`font-medium ${tx.type === "buy" ? "text-emerald-400" : "text-red-400"}`}
+                            >
+                              {tx.type === "buy" ? "Buy" : "Sell"}
+                            </span>
+                          </td>
+
+                          <td className="py-3 px-3 font-mono text-foreground">{tx.bnb}</td>
+
+                          <td className="py-3 px-3 font-mono">
+                            <span className={tx.type === "buy" ? "text-emerald-300" : "text-red-300"}>
+                              {tx.amount}
+                            </span>
+                          </td>
+
+                          <td className="py-3 px-3 text-muted-foreground whitespace-nowrap">{tx.time}</td>
+
+                          <td className="py-3 px-3 text-right">
+                            {txUrl ? (
+                              <a
+                                href={txUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="font-mono text-muted-foreground hover:text-foreground hover:underline underline-offset-4"
+                              >
+                                {txLabel}
+                              </a>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                     {txs.length === 0 && (
                       <tr>
                         <td colSpan={6} className="py-6 text-center text-sm text-muted-foreground">
