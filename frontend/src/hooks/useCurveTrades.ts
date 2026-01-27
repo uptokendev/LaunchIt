@@ -114,7 +114,9 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
   const inFlightRef = useRef(false);
   const initialLoadedRef = useRef(false);
 
-  const reconcileMs = opts?.reconcileMs ?? 30_000;
+  // If Ably realtime is temporarily unavailable (e.g., mobile networks, WS blocked),
+  // this snapshot reconcile keeps the UI fresh. Keep it relatively low for testnet UX.
+  const reconcileMs = opts?.reconcileMs ?? 10_000;
   const limit = Math.min(Math.max(Number(opts?.limit ?? 200), 1), 200);
 
   const apiTradesUrl = useMemo(() => {

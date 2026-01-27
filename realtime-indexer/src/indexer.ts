@@ -5,6 +5,11 @@ import { LAUNCH_FACTORY_ABI, LAUNCH_CAMPAIGN_ABI } from "./abis.js";
 import { TIMEFRAMES, bucketStart, TF } from "./timeframes.js";
 import { publishTrade, publishCandle, publishStats } from "./ably.js";
 
+// Cache providers by (chainId,url) to reduce repeated provider startup churn.
+// This helps avoid noisy "failed to detect network" logs on some hosts when
+// instantiating many providers repeatedly.
+const PROVIDER_CACHE = new Map<string, ethers.JsonRpcProvider>();
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -572,16 +577,28 @@ async function runIndexerCore(opts: { mode: "normal" | "repair"; lookbackBlocks:
 
     let rpcIdx = 0;
 
-    const makeProvider = () =>
-      // Provide a static network to avoid "failed to detect network" churn in some hosts.
-      new ethers.JsonRpcProvider(rpcList[rpcIdx], {
-        chainId: chain.chainId,
-        name: chain.chainId === 97 ? "bsc-testnet" : "bsc"
-      }, {
-        // reduce batch eth_getLogs pressure on public endpoints
-        batchMaxCount: 1,
-        batchStallTime: 0
-      });
+    const makeProvider = () => {
+      const url = rpcList[rpcIdx];
+      const cacheKey = `${chain.chainId}:${url}`;
+      const cached = PROVIDER_CACHE.get(cacheKey);
+      if (cached) return cached;
+
+      // Provide a static network to avoid "failed to detect network" churn.
+      const p = new ethers.JsonRpcProvider(
+        url,
+        {
+          chainId: chain.chainId,
+          name: chain.chainId === 97 ? "bsc-testnet" : "bsc",
+        },
+        {
+          // Reduce batch eth_getLogs pressure on public endpoints.
+          batchMaxCount: 1,
+          batchStallTime: 0,
+        }
+      );
+      PROVIDER_CACHE.set(cacheKey, p);
+      return p;
+    };
 
     const rotate = () => {
       rpcIdx = (rpcIdx + 1) % rpcList.length;
