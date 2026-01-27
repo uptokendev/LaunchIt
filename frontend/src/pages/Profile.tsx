@@ -136,9 +136,9 @@ const Profile = () => {
   const walletAddressFull = viewedAddress ?? "Not connected";
 
   const explorerUrl = useMemo(() => {
-    if (!account) return "#";
+    if (!viewedAddress) return "#";
     const base = getExplorerBase(chainId);
-    return `${base}/address/${account}`;
+    return `${base}/address/${viewedAddress}`;
   }, [viewedAddress, chainId]);
 
   // Load profile from backend (username/bio/avatar) if configured
@@ -555,10 +555,10 @@ const Profile = () => {
   }, [created]);
 
   return (
-    <div className="fixed inset-0 pt-28 lg:pt-28 pl-0 lg:pl-72 relative">
+        <div className="w-full min-h-[100dvh] pt-20 md:pt-24 lg:pt-24 pl-0 lg:pl-0 overflow-y-auto">
       {/* Disconnect Overlay */}
       {!isConnected && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-sm">
           <div className="bg-card/40 border border-border rounded-2xl p-8 text-center max-w-md w-[92%]">
             <div className="font-retro text-foreground text-xl mb-2">Connect your wallet</div>
             <div className="font-retro text-muted-foreground text-sm mb-6">
@@ -575,7 +575,7 @@ const Profile = () => {
       )}
 
       <div
-        className={`h-full p-4 md:p-6 overflow-y-auto ${
+        className={`p-4 md:p-6 ${
           !isConnected ? "blur-md pointer-events-none select-none" : ""
         }`}
       >
