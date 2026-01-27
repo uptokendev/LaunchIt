@@ -32,14 +32,13 @@ export function useWallet(): WalletHook {
     }
 
     // Prefer MetaMask if multiple providers are injected
-    const injected =
-      ethereum.providers?.find?.((p: any) => p.isMetaMask) || ethereum;
+    const injected = ethereum.providers?.find?.((p: any) => p.isMetaMask) || ethereum;
 
-      // ADD THIS GUARD
-if (!injected || typeof injected.request !== "function") {
-  return;
-}
-    const browserProvider = new BrowserProvider(injected);
+    if (!injected || typeof injected.request !== "function") return;
+    // IMPORTANT (ethers v6): BrowserProvider throws NETWORK_ERROR if the wallet
+    // changes networks after the provider is created. So we recreate the
+    // BrowserProvider on chainChanged.
+    let browserProvider = new BrowserProvider(injected);
     setProvider(browserProvider);
 
     const handleAccountsChanged = (accounts: string[]) => {
@@ -62,6 +61,19 @@ if (!injected || typeof injected.request !== "function") {
         setChainId(Number(BigInt(hexChainId)));
       } catch {
         setChainId(undefined);
+      }
+
+      // Recreate provider + signer to avoid "network changed" errors.
+      try {
+        browserProvider = new BrowserProvider(injected);
+        setProvider(browserProvider);
+        // Refresh signer based on current accounts
+        browserProvider
+          .send("eth_accounts", [])
+          .then(handleAccountsChanged)
+          .catch(() => setSigner(null));
+      } catch {
+        // ignore
       }
     };
 

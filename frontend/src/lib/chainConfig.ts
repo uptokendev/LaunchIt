@@ -18,28 +18,6 @@ const parseCsvNumbers = (raw?: string): number[] => {
     .filter((n) => Number.isFinite(n) && n > 0);
 };
 
-const normalizeRpcUrl = (raw: string): string => {
-  let s = String(raw).trim();
-
-  // Common typo: missing ':' after scheme, e.g. "https//..."
-  if (s.startsWith("https//")) s = "https://" + s.slice("https//".length);
-  if (s.startsWith("http//")) s = "http://" + s.slice("http//".length);
-
-  // If scheme is missing entirely, assume https
-  if (!/^https?:\/\//i.test(s)) s = `https://${s}`;
-
-  return s;
-};
-
-const parseCsvUrls = (raw?: string): string[] => {
-  if (!raw) return [];
-  return raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .map(normalizeRpcUrl);
-};
-
 export function getAllowedChainIds(): SupportedChainId[] {
   const raw = import.meta.env.VITE_ALLOWED_CHAIN_IDS as string | undefined;
   const parsed = parseCsvNumbers(raw) as SupportedChainId[];
@@ -65,26 +43,41 @@ export function getActiveChainId(walletChainId?: number | null): SupportedChainI
 }
 
 export function getPublicRpcUrl(chainId: SupportedChainId): string {
+  // NOTE: In Vite, only VITE_* env vars are exposed to the frontend bundle.
+  // We support comma-separated lists for redundancy.
+
+  const normalize = (u: string) => {
+    const s = u.trim();
+    // common typo: "https//" (missing colon)
+    if (s.startsWith("https//")) return "https:" + s.slice("https".length);
+    if (s.startsWith("http//")) return "http:" + s.slice("http".length);
+    return s;
+  };
+
+  const firstFromCsv = (raw?: string) => {
+    if (!raw) return "";
+    const parts = String(raw)
+      .split(",")
+      .map((p) => normalize(p))
+      .filter(Boolean);
+    return parts[0] ?? "";
+  };
+
   // Preferred env keys (explicit per-chain)
   const explicit =
     (import.meta.env[`VITE_PUBLIC_RPC_${chainId}`] as string | undefined) ??
     (import.meta.env[`VITE_BSC_RPC_${chainId}`] as string | undefined);
 
-  // NOTE: allow comma-separated RPC URLs; return the first as the "primary".
-  if (explicit && String(explicit).trim().length) {
-    const urls = parseCsvUrls(String(explicit));
-    if (urls.length) return urls[0];
-  }
+  const explicitFirst = firstFromCsv(explicit);
+  if (explicitFirst) return explicitFirst;
 
   // Secondary env keys (common naming)
   if (chainId === 56) {
     const v =
       (import.meta.env.VITE_BSC_MAINNET_RPC as string | undefined) ??
       (import.meta.env.VITE_PUBLIC_RPC_MAINNET as string | undefined);
-    if (v && String(v).trim().length) {
-      const urls = parseCsvUrls(String(v));
-      if (urls.length) return urls[0];
-    }
+    const vFirst = firstFromCsv(v);
+    if (vFirst) return vFirst;
     return "https://bsc-dataseed.binance.org/";
   }
 
@@ -92,35 +85,48 @@ export function getPublicRpcUrl(chainId: SupportedChainId): string {
   const v =
     (import.meta.env.VITE_BSC_TESTNET_RPC as string | undefined) ??
     (import.meta.env.VITE_PUBLIC_RPC_TESTNET as string | undefined);
-  if (v && String(v).trim().length) {
-    const urls = parseCsvUrls(String(v));
-    if (urls.length) return urls[0];
-  }
+  const vFirst = firstFromCsv(v);
+  if (vFirst) return vFirst;
   return "https://data-seed-prebsc-1-s1.binance.org:8545/";
 }
 
+// For redundancy: get *all* configured public RPC URLs for a chain.
 export function getPublicRpcUrls(chainId: SupportedChainId): string[] {
+  const normalize = (u: string) => {
+    const s = u.trim();
+    if (s.startsWith("https//")) return "https:" + s.slice("https".length);
+    if (s.startsWith("http//")) return "http:" + s.slice("http".length);
+    return s;
+  };
+
+  const fromCsv = (raw?: string) => {
+    if (!raw) return [];
+    return String(raw)
+      .split(",")
+      .map((p) => normalize(p))
+      .filter((p) => Boolean(p));
+  };
+
   const explicit =
     (import.meta.env[`VITE_PUBLIC_RPC_${chainId}`] as string | undefined) ??
     (import.meta.env[`VITE_BSC_RPC_${chainId}`] as string | undefined);
-  if (explicit && String(explicit).trim().length) {
-    const urls = parseCsvUrls(String(explicit));
-    if (urls.length) return urls;
-  }
+
+  const explicitList = fromCsv(explicit);
+  if (explicitList.length) return explicitList;
 
   if (chainId === 56) {
     const v =
       (import.meta.env.VITE_BSC_MAINNET_RPC as string | undefined) ??
       (import.meta.env.VITE_PUBLIC_RPC_MAINNET as string | undefined);
-    const urls = parseCsvUrls(v);
-    return urls.length ? urls : ["https://bsc-dataseed.binance.org/"];
+    const list = fromCsv(v);
+    return list.length ? list : ["https://bsc-dataseed.binance.org/"];
   }
 
   const v =
     (import.meta.env.VITE_BSC_TESTNET_RPC as string | undefined) ??
     (import.meta.env.VITE_PUBLIC_RPC_TESTNET as string | undefined);
-  const urls = parseCsvUrls(v);
-  return urls.length ? urls : ["https://data-seed-prebsc-1-s1.binance.org:8545/"];
+  const list = fromCsv(v);
+  return list.length ? list : ["https://data-seed-prebsc-1-s1.binance.org:8545/"];
 }
 
 export function getFactoryAddress(chainId: SupportedChainId): string {
@@ -143,7 +149,7 @@ export function getChainParams(chainId: SupportedChainId) {
       chainId: "0x38",
       chainName: "BNB Smart Chain",
       nativeCurrency: { name: "BNB", symbol: "BNB", decimals: 18 },
-      rpcUrls: getPublicRpcUrls(56),
+      rpcUrls: [getPublicRpcUrl(56)],
       blockExplorerUrls: ["https://bscscan.com/"],
     };
   }
@@ -151,7 +157,7 @@ export function getChainParams(chainId: SupportedChainId) {
     chainId: "0x61",
     chainName: "BNB Smart Chain Testnet",
     nativeCurrency: { name: "tBNB", symbol: "tBNB", decimals: 18 },
-    rpcUrls: getPublicRpcUrls(97),
+    rpcUrls: [getPublicRpcUrl(97)],
     blockExplorerUrls: ["https://testnet.bscscan.com/"],
   };
 }
