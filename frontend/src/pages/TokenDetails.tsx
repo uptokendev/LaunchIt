@@ -66,15 +66,17 @@ const TokenDetails = () => {
 
   const { toast } = useToast();
   const [tradeAmount, setTradeAmount] = useState("0");
-  const [tradeTab, setTradeTab] = useState<"buy" | "sell">("buy");
-type TradeInputDenom = "TOKEN" | "BNB";
-const [tradeInputDenom, setTradeInputDenom] = useState<{ buy: TradeInputDenom; sell: TradeInputDenom }>({
-  buy: "TOKEN",
-  sell: "TOKEN",
-});
-const currentInputDenom = tradeInputDenom[tradeTab];
-const [tradeTokenWei, setTradeTokenWei] = useState<bigint | null>(null);
 
+  const [tradeInputDenom, setTradeInputDenom] = useState<"TOKEN" | "BNB">("TOKEN");
+  const toggleTradeInputDenom = () => {
+    setTradeAmount("0");
+    setQuoteWei(null);
+    setQuoteError(null);
+    setTradeInputDenom((d) => (d === "TOKEN" ? "BNB" : "TOKEN"));
+  };
+  const [effectiveTokenWei, setEffectiveTokenWei] = useState<bigint>(0n);
+  const [effectiveBnbWei, setEffectiveBnbWei] = useState<bigint>(0n);
+  const [tradeTab, setTradeTab] = useState<"buy" | "sell">("buy");
   const handleTradeTabChange = (value: string) => {
     setTradeTab(value as "buy" | "sell");
   };
@@ -319,18 +321,20 @@ const [tradeTokenWei, setTradeTokenWei] = useState<bigint | null>(null);
       return 0n;
     }
   };
-const parseBnbAmountWei = (value: string): bigint => {
-  const v = (value ?? "").trim();
-  if (!v || v === "." || v === "-") return 0n;
-  const cleaned = v.replace(/,/g, ".").replace(/[^0-9.]/g, "");
-  const parts = cleaned.split(".");
-  const normalized = parts.length <= 2 ? cleaned : parts[0] + "." + parts.slice(1).join("");
-  try {
-    return ethers.parseUnits(normalized || "0", 18);
-  } catch {
-    return 0n;
-  }
-};
+
+
+  const parseBnbAmountWei = (value: string): bigint => {
+    const v = (value ?? "").trim();
+    if (!v || v === "." || v === "-") return 0n;
+    const cleaned = v.replace(/,/g, ".").replace(/[^0-9.]/g, "");
+    const parts = cleaned.split(".");
+    const normalized = parts.length <= 2 ? cleaned : parts[0] + "." + parts.slice(1).join("");
+    try {
+      return ethers.parseEther(normalized || "0");
+    } catch {
+      return 0n;
+    }
+  };
 
   const formatPriceBnb = (p?: number | null): string => {
     if (p == null || !Number.isFinite(p)) return "—";
@@ -1114,201 +1118,137 @@ setTxs(next);
   const chartTitle = isDexStage ? "DEX chart" : "";
   const stagePill = isDexStage ? "Graduated" : "Bonding";
 
-  // Quote:
-// - TOKEN input: buy -> BNB cost for exact token amount; sell -> BNB payout for exact token amount
-// - BNB input: buy -> derive token amount that fits within entered BNB (max spend); sell -> derive token amount for ~entered BNB payout
-useEffect(() => {
-  let cancelled = false;
+  // Quote (buy: BNB cost; sell: BNB payout) for the entered token amount
+  useEffect(() => {
+    let cancelled = false;
 
-  const loadQuote = async () => {
-    try {
-      setQuoteError(null);
-      setTradeTokenWei(null);
+    const loadQuote = async () => {
+      try {
+        setQuoteError(null);
 
-      if (isDexStage) {
-        setQuoteWei(null);
-        return;
-      }
-      if (!campaign?.campaign) {
-        setQuoteWei(null);
-        return;
-      }
-
-      const denom = tradeInputDenom[tradeTab];
-      const priceWei = metrics?.currentPrice ?? 0n;
-
-      const ensureContract = () => {
-        if (!wallet.provider) return null;
-        return new Contract(campaign.campaign, CAMPAIGN_ABI, wallet.provider) as any;
-      };
-
-      const quoteBuy = async (tokenWei: bigint): Promise<bigint> => {
-        if (USE_MOCK_DATA) {
-          const gross = (tokenWei * priceWei) / 10n ** 18n;
-          return gross;
-        }
-        const c = ensureContract();
-        if (!c) throw new Error("Wallet provider not available");
-        return (await c.quoteBuyExactTokens(tokenWei)) as bigint;
-      };
-
-      const quoteSell = async (tokenWei: bigint): Promise<bigint> => {
-        if (USE_MOCK_DATA) {
-          const gross = (tokenWei * priceWei) / 10n ** 18n;
-          return (gross * 95n) / 100n;
-        }
-        const c = ensureContract();
-        if (!c) throw new Error("Wallet provider not available");
-        return (await c.quoteSellExactTokens(tokenWei)) as bigint;
-      };
-
-      const findMaxTokensForCost = async (maxCostWei: bigint): Promise<bigint> => {
-        if (maxCostWei <= 0n) return 0n;
-
-        let hi = 1n;
-        if (priceWei > 0n) {
-          const est = (maxCostWei * 10n ** 18n) / priceWei;
-          hi = est > 0n ? est : 1n;
-        }
-
-        // Ensure hi is an upper bound (cost >= maxCost)
-        for (let i = 0; i < 24; i++) {
-          const cost = await quoteBuy(hi);
-          if (cost >= maxCostWei) break;
-          hi *= 2n;
-        }
-
-        let lo = 0n;
-        for (let i = 0; i < 30; i++) {
-          const mid = (lo + hi) / 2n;
-          if (mid === lo) break;
-          const cost = await quoteBuy(mid);
-          if (cost <= maxCostWei) lo = mid;
-          else hi = mid;
-        }
-        return lo;
-      };
-
-      const findMinTokensForPayout = async (minPayoutWei: bigint): Promise<bigint> => {
-        if (minPayoutWei <= 0n) return 0n;
-
-        let hi = 1n;
-        if (priceWei > 0n) {
-          const est = (minPayoutWei * 10n ** 18n) / priceWei;
-          hi = est > 0n ? est : 1n;
-        }
-
-        // Ensure hi is an upper bound (payout >= minPayout)
-        for (let i = 0; i < 24; i++) {
-          const out = await quoteSell(hi);
-          if (out >= minPayoutWei) break;
-          hi *= 2n;
-        }
-
-        let lo = 0n;
-        for (let i = 0; i < 30; i++) {
-          const mid = (lo + hi) / 2n;
-          if (mid === lo) break;
-          const out = await quoteSell(mid);
-          if (out >= minPayoutWei) hi = mid;
-          else lo = mid;
-        }
-        return hi;
-      };
-
-      setQuoteLoading(true);
-
-      if (denom === "TOKEN") {
-        const tokenWei = parseTokenAmountWei(tradeAmount);
-        if (tokenWei <= 0n) {
+        if (isDexStage) {
           setQuoteWei(null);
-          setTradeTokenWei(null);
+          return;
+        }
+        if (!campaign?.campaign) {
+          setQuoteWei(null);
           return;
         }
 
-        const q = tradeTab === "buy" ? await quoteBuy(tokenWei) : await quoteSell(tokenWei);
-        if (!cancelled) {
-          setTradeTokenWei(tokenWei);
-          setQuoteWei(q);
-        }
-        return;
-      }
-
-      // denom === "BNB"
-      const bnbWei = parseBnbAmountWei(tradeAmount);
-      if (bnbWei <= 0n) {
-        setQuoteWei(null);
-        setTradeTokenWei(null);
-        return;
-      }
-
-      if (tradeTab === "buy") {
-        // Interpret as MAX spend; derive token amount using a slippage cushion.
-        const maxSpendWei = bnbWei;
-        const targetCostWei = (maxSpendWei * 100n) / BigInt(100 + SLIPPAGE_PCT);
-        const tokenWei = await findMaxTokensForCost(targetCostWei);
-
-        if (tokenWei <= 0n) {
-          if (!cancelled) {
-            setTradeTokenWei(null);
+        let amountWei = 0n;
+        let inputBnbWei = 0n;
+        if (tradeInputDenom === "BNB") {
+          inputBnbWei = parseBnbAmountWei(tradeAmount);
+          setEffectiveBnbWei(inputBnbWei);
+          if (inputBnbWei <= 0n) {
+            setEffectiveTokenWei(0n);
             setQuoteWei(null);
+            return;
+          }
+        } else {
+          amountWei = parseTokenAmountWei(tradeAmount);
+          setEffectiveTokenWei(amountWei);
+          if (amountWei <= 0n) {
+            setQuoteWei(null);
+            return;
+          }
+        }
+
+        setQuoteLoading(true);
+
+        if (USE_MOCK_DATA) {
+          const priceWei = metrics?.currentPrice ?? 0n;
+          if (tradeInputDenom === "BNB") {
+            // Approximate inversion using current price.
+            if (priceWei > 0n) {
+              const estTokens = (inputBnbWei * 10n ** 18n) / priceWei;
+              amountWei = tradeTab === "buy" ? estTokens : (estTokens * 100n) / 95n;
+            } else {
+              amountWei = 0n;
+            }
+            if (!cancelled) {
+              setEffectiveTokenWei(amountWei);
+              setQuoteWei(inputBnbWei);
+            }
+            return;
+          }
+          const gross = (amountWei * priceWei) / 10n ** 18n;
+          const q = tradeTab === "buy" ? gross : (gross * 95n) / 100n;
+          if (!cancelled) setQuoteWei(q);
+          return;
+        }
+
+        if (!wallet.provider) {
+          if (!cancelled) {
+            setQuoteWei(null);
+            setQuoteError("Wallet provider not available");
           }
           return;
         }
 
-        const costWei = await quoteBuy(tokenWei);
-        if (!cancelled) {
-          setTradeTokenWei(tokenWei);
-          setQuoteWei(costWei);
+        const c = new Contract(campaign.campaign, CAMPAIGN_ABI, wallet.provider) as any;
+        if (tradeInputDenom === "BNB") {
+          // Invert the quote function so the user can input BNB.
+          const targetWei = inputBnbWei;
+          const priceWei = metrics?.currentPrice ?? 0n;
+          let hi: bigint;
+          if (tradeTab === "sell" && tokenBalanceWei != null && tokenBalanceWei > 0n) {
+            hi = tokenBalanceWei;
+          } else if (priceWei > 0n) {
+            const est = (targetWei * 10n ** 18n) / priceWei;
+            hi = est > 0n ? est * 2n : 10n ** 18n;
+          } else {
+            hi = 10n ** 24n;
+          }
+          let lo = 0n;
+          // 28 iterations ~= good precision without too many RPC calls.
+          for (let i = 0; i < 28; i++) {
+            const mid = (lo + hi) / 2n;
+            if (mid <= 0n) {
+              lo = 0n;
+              continue;
+            }
+            const q: bigint = tradeTab === "buy"
+              ? await c.quoteBuyExactTokens(mid)
+              : await c.quoteSellExactTokens(mid);
+            if (tradeTab === "buy") {
+              // Max tokens such that cost <= target
+              if (q <= targetWei) lo = mid; else hi = mid;
+            } else {
+              // Min tokens such that payout >= target
+              if (q >= targetWei) hi = mid; else lo = mid;
+            }
+          }
+          const solved = tradeTab === "buy" ? lo : hi;
+          if (!cancelled) {
+            setEffectiveTokenWei(solved);
+            setQuoteWei(targetWei);
+          }
+        } else {
+          const q: bigint = tradeTab === "buy"
+            ? await c.quoteBuyExactTokens(amountWei)
+            : await c.quoteSellExactTokens(amountWei);
+          if (!cancelled) setQuoteWei(q);
         }
-        return;
-      }
-
-      // sell: interpret as TARGET payout (BNB). Derive token amount required to approximately reach it.
-      const targetPayoutWei = bnbWei;
-      const tokenWei = await findMinTokensForPayout(targetPayoutWei);
-
-      if (tokenWei <= 0n) {
+      } catch (e: any) {
+        console.warn("[TokenDetails] Quote failed", e);
         if (!cancelled) {
-          setTradeTokenWei(null);
           setQuoteWei(null);
+          setQuoteError(e?.message ?? "Failed to fetch quote");
         }
-        return;
+      } finally {
+        if (!cancelled) setQuoteLoading(false);
       }
+    };
 
-      const payoutWei = await quoteSell(tokenWei);
-      if (!cancelled) {
-        setTradeTokenWei(tokenWei);
-        setQuoteWei(payoutWei);
-      }
-    } catch (e: any) {
-      console.warn("[TokenDetails] Quote failed", e);
-      if (!cancelled) {
-        setQuoteWei(null);
-        setTradeTokenWei(null);
-        setQuoteError(e?.message ?? "Failed to fetch quote");
-      }
-    } finally {
-      if (!cancelled) setQuoteLoading(false);
-    }
-  };
+    const t = setTimeout(loadQuote, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [wallet.provider, campaign?.campaign, metrics?.currentPrice, tradeTab, tradeAmount, tradeInputDenom, tokenBalanceWei, isDexStage]);
 
-  const t = setTimeout(loadQuote, 250);
-  return () => {
-    cancelled = true;
-    clearTimeout(t);
-  };
-}, [
-  wallet.provider,
-  campaign?.campaign,
-  metrics?.currentPrice,
-  tradeTab,
-  tradeAmount,
-  tradeInputDenom,
-  isDexStage,
-]);
-
-const handlePlaceTrade = async () => {
+  const handlePlaceTrade = async () => {
     if (!campaign?.campaign) return;
 
     if (isDexStage) {
@@ -1320,21 +1260,16 @@ const handlePlaceTrade = async () => {
       return;
     }
 
-const denom = tradeInputDenom[tradeTab];
-const bnbInputWei = denom === "BNB" ? parseBnbAmountWei(tradeAmount) : null;
-const amountWei = denom === "TOKEN" ? parseTokenAmountWei(tradeAmount) : (tradeTokenWei ?? 0n);
-
-if (amountWei <= 0n) {
-  toast({
-    title: "Invalid amount",
-    description:
-      denom === "BNB"
-        ? "Enter a BNB amount greater than 0."
-        : `Enter a ${tokenData.ticker} amount greater than 0.`,
-    variant: "destructive",
-  });
-  return;
-}
+    const amountWei = tradeInputDenom === "BNB" ? effectiveTokenWei : parseTokenAmountWei(tradeAmount);
+  const inputBnbWei = tradeInputDenom === "BNB" ? effectiveBnbWei : 0n;
+    if (amountWei <= 0n) {
+      toast({
+        title: "Invalid amount",
+        description: tradeInputDenom === "BNB" ? "Enter a BNB amount greater than 0." : `Enter a ${tokenData.ticker} amount greater than 0.`,
+        variant: "destructive",
+      });
+      return;
+    }
 
     try {
       // Balance sanity checks (best-effort)
@@ -1348,22 +1283,19 @@ if (amountWei <= 0n) {
       }
 
       if (!isDexStage && tradeTab === "buy" && bnbBalanceWei != null) {
-  const maxCostWei =
-    denom === "BNB" && bnbInputWei != null
-      ? bnbInputWei
-      : quoteWei != null
-        ? (quoteWei * BigInt(100 + SLIPPAGE_PCT)) / 100n
-        : null;
-
-  if (maxCostWei != null && maxCostWei > bnbBalanceWei) {
-    toast({
-      title: "Insufficient BNB",
-      description: `You need ~${formatBnbFromWei(maxCostWei)} to place this buy.`,
-      variant: "destructive",
-    });
-    return;
-  }
-}
+        const baseCostWei = tradeInputDenom === "BNB" ? inputBnbWei : (quoteWei ?? 0n);
+        if (baseCostWei > 0n) {
+          const maxCostWei = (baseCostWei * BigInt(100 + SLIPPAGE_PCT)) / 100n;
+          if (maxCostWei > bnbBalanceWei) {
+          toast({
+            title: "Insufficient BNB",
+            description: `You need ~${formatBnbFromWei(maxCostWei)} to place this buy.`,
+            variant: "destructive",
+          });
+          return;
+        }
+          }
+      }
 
       // Ensure wallet is connected for writes (live mode)
       if (!USE_MOCK_DATA) {
@@ -1380,8 +1312,8 @@ if (amountWei <= 0n) {
       setTradePending(true);
 
       if (tradeTab === "buy") {
-        let costWei = quoteWei;
-        if (costWei == null) {
+        let costWei = tradeInputDenom === "BNB" ? inputBnbWei : quoteWei;
+        if (costWei == null || costWei === 0n) {
           if (USE_MOCK_DATA) {
             const priceWei = metrics?.currentPrice ?? 0n;
             costWei = (amountWei * priceWei) / 10n ** 18n;
@@ -1391,7 +1323,7 @@ if (amountWei <= 0n) {
           }
         }
 
-        const maxCostWei = denom === "BNB" && bnbInputWei != null ? bnbInputWei : (costWei * BigInt(100 + SLIPPAGE_PCT)) / 100n;
+        const maxCostWei = (costWei * BigInt(100 + SLIPPAGE_PCT)) / 100n;
 
         toast({
           title: "Submitting buy",
@@ -1405,8 +1337,8 @@ if (amountWei <= 0n) {
           description: receipt?.transactionHash ? `Tx: ${receipt.transactionHash.slice(0, 10)}...` : "Transaction confirmed.",
         });
       } else {
-        let payoutWei = quoteWei;
-        if (payoutWei == null) {
+        let payoutWei = tradeInputDenom === "BNB" ? inputBnbWei : quoteWei;
+        if (payoutWei == null || payoutWei === 0n) {
           if (USE_MOCK_DATA) {
             const priceWei = metrics?.currentPrice ?? 0n;
             const gross = (amountWei * priceWei) / 10n ** 18n;
@@ -1417,7 +1349,7 @@ if (amountWei <= 0n) {
           }
         }
 
-        const minPayoutWei = denom === "BNB" && bnbInputWei != null ? (bnbInputWei * BigInt(100 - SLIPPAGE_PCT)) / 100n : (payoutWei * BigInt(100 - SLIPPAGE_PCT)) / 100n;
+        const minPayoutWei = (payoutWei * BigInt(100 - SLIPPAGE_PCT)) / 100n;
 
         if (!USE_MOCK_DATA && campaign?.token) {
           const token = new Contract(campaign.token, TOKEN_ABI, wallet.signer) as any;
@@ -2000,29 +1932,7 @@ style={!isMobile ? { flex: "2" } : undefined}
               <TabsContent value="buy" className="space-y-3">
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-xs text-muted-foreground">
-                        Amount ({currentInputDenom === "BNB" ? "BNB" : tokenData.ticker})
-                      </span>
-                      <div className="flex items-center gap-1 rounded-md bg-muted/40 p-0.5">
-                        <Button
-                          size="sm"
-                          variant={currentInputDenom === "BNB" ? "secondary" : "ghost"}
-                          className="h-4 px-2"
-                          onClick={() => setTradeInputDenom((p) => ({ ...p, [tradeTab]: "BNB" }))}
-                        >
-                          BNB
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant={currentInputDenom === "TOKEN" ? "secondary" : "ghost"}
-                          className="h-4 px-2"
-                          onClick={() => setTradeInputDenom((p) => ({ ...p, [tradeTab]: "TOKEN" }))}
-                        >
-                          {tokenData.ticker}
-                        </Button>
-                      </div>
-                    </div>
+                    <div className="flex items-center gap-2"><span className="text-xs text-muted-foreground">Amount ({tradeInputDenom === "BNB" ? "BNB" : tokenData.ticker})</span><Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] text-muted-foreground hover:text-foreground" onClick={toggleTradeInputDenom}>{tradeInputDenom === "BNB" ? `Switch to ${tokenData.ticker}` : "Switch to BNB"}</Button></div>
                     <span className="text-xs text-muted-foreground">Slippage: {SLIPPAGE_PCT}%</span>
                   </div>
                   <div className="relative">
@@ -2034,17 +1944,18 @@ style={!isMobile ? { flex: "2" } : undefined}
                       placeholder="0"
                     />
                     <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                      <span className="text-xs font-mono text-muted-foreground">{currentInputDenom === "BNB" ? "BNB" : tokenData.ticker}</span>
+                      <span className="text-xs font-mono text-muted-foreground">{tradeInputDenom === "BNB" ? "BNB" : tokenData.ticker}</span>
                     </div>
                   </div>
                   <div className="flex items-center justify-between mt-2">
                     <span className="text-xs text-muted-foreground">Wallet: {formatBnbFromWei(bnbBalanceWei)}</span>
                     <span className="text-xs text-muted-foreground">
-                      {currentInputDenom === "BNB"
-                        ? `Receive: ${tradeTokenWei != null ? formatTokenFromWei(tradeTokenWei) : "—"} ${tokenData.ticker}`
-                        : `Cost: ${quoteLoading ? "…" : quoteWei != null ? formatBnbFromWei(quoteWei) : "—"}`}
+                      Cost: {tradeInputDenom === "BNB" ? formatBnbFromWei(effectiveBnbWei) : (quoteLoading ? "…" : quoteWei != null ? formatBnbFromWei(quoteWei) : "—")}
                     </span>
                   </div>
+                  {tradeInputDenom === "BNB" && effectiveTokenWei > 0n ? (
+                    <p className="mt-1 text-[11px] text-muted-foreground">Est. receive: {formatTokenFromWei(effectiveTokenWei)} {tokenData.ticker}</p>
+                  ) : null}
                   {quoteError ? (
                     <p className="mt-2 text-center text-xs text-destructive">{quoteError}</p>
                   ) : null}
@@ -2055,15 +1966,7 @@ style={!isMobile ? { flex: "2" } : undefined}
                     <p>Token is graduated. Trade on DEX.</p>
                   ) : quoteWei != null ? (
                     <p>
-                      {currentInputDenom === "BNB" ? (
-                        <>
-                          You will buy ~{tradeTokenWei != null ? formatTokenFromWei(tradeTokenWei) : "—"} {tokenData.ticker} (max {formatBnbFromWei(parseBnbAmountWei(tradeAmount))})
-                        </>
-                      ) : (
-                        <>
-                          You will pay ~{formatBnbFromWei(quoteWei)} (max {formatBnbFromWei((quoteWei * BigInt(100 + SLIPPAGE_PCT)) / 100n)})
-                        </>
-                      )}
+                      You will pay ~{formatBnbFromWei(quoteWei)} (max {formatBnbFromWei((quoteWei * BigInt(100 + SLIPPAGE_PCT)) / 100n)})
                     </p>
                   ) : (
                     <p>Enter an amount to see the buy quote.</p>
@@ -2072,7 +1975,7 @@ style={!isMobile ? { flex: "2" } : undefined}
 
                 <Button
                   onClick={handlePlaceTrade}
-                  disabled={tradePending || approvePending || (!isDexStage && (currentInputDenom === "TOKEN" ? parseTokenAmountWei(tradeAmount) <= 0n : (tradeTokenWei ?? 0n) <= 0n))}
+                  disabled={tradePending || approvePending || (!isDexStage && (tradeInputDenom === "BNB" ? effectiveBnbWei <= 0n : parseTokenAmountWei(tradeAmount) <= 0n))}
                   className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-retro py-5"
                 >
                   {tradePending ? "Processing..." : isDexStage ? "Trade on DEX" : "Place Trade"}
@@ -2082,29 +1985,7 @@ style={!isMobile ? { flex: "2" } : undefined}
               <TabsContent value="sell" className="space-y-3">
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-xs text-muted-foreground">
-                        Amount ({currentInputDenom === "BNB" ? "BNB" : tokenData.ticker})
-                      </span>
-                      <div className="flex items-center gap-1 rounded-md bg-muted/40 p-0.5">
-                        <Button
-                          size="sm"
-                          variant={currentInputDenom === "BNB" ? "secondary" : "ghost"}
-                          className="h-4 px-2"
-                          onClick={() => setTradeInputDenom((p) => ({ ...p, [tradeTab]: "BNB" }))}
-                        >
-                          BNB
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant={currentInputDenom === "TOKEN" ? "secondary" : "ghost"}
-                          className="h-4 px-2"
-                          onClick={() => setTradeInputDenom((p) => ({ ...p, [tradeTab]: "TOKEN" }))}
-                        >
-                          {tokenData.ticker}
-                        </Button>
-                      </div>
-                    </div>
+                    <div className="flex items-center gap-2"><span className="text-xs text-muted-foreground">Amount ({tradeInputDenom === "BNB" ? "BNB" : tokenData.ticker})</span><Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] text-muted-foreground hover:text-foreground" onClick={toggleTradeInputDenom}>{tradeInputDenom === "BNB" ? `Switch to ${tokenData.ticker}` : "Switch to BNB"}</Button></div>
                     <span className="text-xs text-muted-foreground">Slippage: {SLIPPAGE_PCT}%</span>
                   </div>
                   <div className="relative">
@@ -2116,11 +1997,10 @@ style={!isMobile ? { flex: "2" } : undefined}
                       placeholder="0"
                     />
                     <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                      <span className="text-xs font-mono text-muted-foreground">{currentInputDenom === "BNB" ? "BNB" : tokenData.ticker}</span>
+                      <span className="text-xs font-mono text-muted-foreground">{tradeInputDenom === "BNB" ? "BNB" : tokenData.ticker}</span>
                     </div>
                   </div>
 
-                  {currentInputDenom === "TOKEN" ? (
                   <div className="flex gap-1 mt-2">
                     <Button
                       variant="outline"
@@ -2158,18 +2038,18 @@ style={!isMobile ? { flex: "2" } : undefined}
                       100%
                     </Button>
                   </div>
-                  ) : null}
 
                   <div className="flex items-center justify-between mt-2">
                     <span className="text-xs text-muted-foreground">
                       Balance: {formatTokenFromWei(tokenBalanceWei)} {tokenData.ticker}
                     </span>
                     <span className="text-xs text-muted-foreground">
-                      {currentInputDenom === "BNB"
-                        ? `Sell: ${tradeTokenWei != null ? formatTokenFromWei(tradeTokenWei) : "—"} ${tokenData.ticker}`
-                        : `Payout: ${quoteLoading ? "…" : quoteWei != null ? formatBnbFromWei(quoteWei) : "—"}`}
+                      Payout: {tradeInputDenom === "BNB" ? formatBnbFromWei(effectiveBnbWei) : (quoteLoading ? "…" : quoteWei != null ? formatBnbFromWei(quoteWei) : "—")}
                     </span>
                   </div>
+                  {tradeInputDenom === "BNB" && effectiveTokenWei > 0n ? (
+                    <p className="mt-1 text-[11px] text-muted-foreground">Est. sell: {formatTokenFromWei(effectiveTokenWei)} {tokenData.ticker}</p>
+                  ) : null}
 
                   {approvePending ? (
                     <p className="mt-2 text-center text-xs text-muted-foreground">Approval in progress...</p>
@@ -2184,15 +2064,7 @@ style={!isMobile ? { flex: "2" } : undefined}
                     <p>Token is graduated. Trade on DEX.</p>
                   ) : quoteWei != null ? (
                     <p>
-                      {currentInputDenom === "BNB" ? (
-                        <>
-                          You will receive ~{formatBnbFromWei(parseBnbAmountWei(tradeAmount))} (min {formatBnbFromWei((parseBnbAmountWei(tradeAmount) * BigInt(100 - SLIPPAGE_PCT)) / 100n)})
-                        </>
-                      ) : (
-                        <>
-                          You will receive ~{formatBnbFromWei(quoteWei)} (min {formatBnbFromWei((quoteWei * BigInt(100 - SLIPPAGE_PCT)) / 100n)})
-                        </>
-                      )}
+                      You will receive ~{formatBnbFromWei(quoteWei)} (min {formatBnbFromWei((quoteWei * BigInt(100 - SLIPPAGE_PCT)) / 100n)})
                     </p>
                   ) : (
                     <p>Enter an amount to see the sell quote.</p>
@@ -2201,7 +2073,7 @@ style={!isMobile ? { flex: "2" } : undefined}
 
                 <Button
                   onClick={handlePlaceTrade}
-                  disabled={tradePending || approvePending || (!isDexStage && (currentInputDenom === "TOKEN" ? parseTokenAmountWei(tradeAmount) <= 0n : (tradeTokenWei ?? 0n) <= 0n))}
+                  disabled={tradePending || approvePending || (!isDexStage && (tradeInputDenom === "BNB" ? effectiveBnbWei <= 0n : parseTokenAmountWei(tradeAmount) <= 0n))}
                   className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-retro py-5"
                 >
                   {tradePending ? "Processing..." : isDexStage ? "Trade on DEX" : "Place Trade"}
