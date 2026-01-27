@@ -1527,26 +1527,26 @@ setTxs(next);
             className="bg-card/30 backdrop-blur-md rounded-2xl border border-border p-0 overflow-hidden flex flex-col min-h-[360px] h-[360px] md:min-h-[420px] md:h-[420px] lg:min-h-[320px] lg:h-auto"
 style={!isMobile ? { flex: "2" } : undefined}
           >
-            <div className="flex items-center justify-between px-4 py-2 border-b border-border/40 bg-card/20">
+            <div className="flex flex-col gap-2 px-4 py-2 border-b border-border/40 bg-card/20 md:flex-row md:items-center md:justify-between">
               <div className="flex items-center gap-2 min-w-0">
                 <span className="text-xs text-muted-foreground">{chartTitle}</span>
                 <span
-                  className={`text-[10px] px-2 py-0.5 rounded-full border ${
-                    isDexStage
-                      ? "bg-green-500/10 text-green-400 border-green-500/20"
-                      : "bg-accent/10 text-accent-foreground border-border/40"
-                  }`}
-                >
+  className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${
+    isDexStage
+      ? "bg-emerald-500/25 text-emerald-200 border-emerald-500/40"
+      : "bg-emerald-500/15 text-emerald-200 border-emerald-500/30"
+  }`}
+>
                   {stagePill}
                 </span>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 w-full md:w-auto md:justify-end">
                 {!isDexStage && (
                   <AthBar
                     currentLabel={marketCapUsdLabel ?? undefined}
                     storageKey={`launchit:ath:${campaign?.campaign ?? campaignAddress ?? tokenData.ticker}`}
-                    className="max-w-[320px]"
+                    className="w-full md:w-auto md:max-w-[320px]"
                   />
                 )}
 
