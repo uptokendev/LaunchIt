@@ -1089,6 +1089,89 @@
       "artifacts": [
         "LpTimelock"
       ]
+    },
+    "E:\\Network\\Zakelijk\\UPMEME\\contracts\\mocks\\MockFeeOnTransferERC20.sol": {
+      "lastModificationDate": 1769553424404,
+      "contentHash": "b34c39ecc5efcf25cb94407d3901f4fe",
+      "sourceName": "contracts/mocks/MockFeeOnTransferERC20.sol",
+      "solcConfig": {
+        "version": "0.8.24",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 1
+          },
+          "viaIR": true,
+          "metadata": {
+            "bytecodeHash": "none"
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "MockFeeOnTransferERC20"
+      ]
+    },
+    "E:\\Network\\Zakelijk\\UPMEME\\contracts\\UPVoteTreasury.sol": {
+      "lastModificationDate": 1769553399350,
+      "contentHash": "2656eaf104d0a87e7914b32c7744d82b",
+      "sourceName": "contracts/UPVoteTreasury.sol",
+      "solcConfig": {
+        "version": "0.8.24",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 1
+          },
+          "viaIR": true,
+          "metadata": {
+            "bytecodeHash": "none"
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "IERC20",
+        "Ownable",
+        "SafeERC20",
+        "UPVoteTreasury"
+      ]
     }
   }
 }

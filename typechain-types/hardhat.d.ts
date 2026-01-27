@@ -94,6 +94,10 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.MockERC20__factory>;
     getContractFactory(
+      name: "MockFeeOnTransferERC20",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.MockFeeOnTransferERC20__factory>;
+    getContractFactory(
       name: "MockRouter",
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.MockRouter__factory>;
@@ -105,6 +109,18 @@ declare module "hardhat/types/runtime" {
       name: "LaunchToken",
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.LaunchToken__factory>;
+    getContractFactory(
+      name: "IERC20",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.IERC20__factory>;
+    getContractFactory(
+      name: "Ownable",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.Ownable__factory>;
+    getContractFactory(
+      name: "UPVoteTreasury",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.UPVoteTreasury__factory>;
 
     getContractAt(
       name: "Ownable",
@@ -207,6 +223,11 @@ declare module "hardhat/types/runtime" {
       signer?: ethers.Signer
     ): Promise<Contracts.MockERC20>;
     getContractAt(
+      name: "MockFeeOnTransferERC20",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.MockFeeOnTransferERC20>;
+    getContractAt(
       name: "MockRouter",
       address: string | ethers.Addressable,
       signer?: ethers.Signer
@@ -221,6 +242,21 @@ declare module "hardhat/types/runtime" {
       address: string | ethers.Addressable,
       signer?: ethers.Signer
     ): Promise<Contracts.LaunchToken>;
+    getContractAt(
+      name: "IERC20",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.IERC20>;
+    getContractAt(
+      name: "Ownable",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.Ownable>;
+    getContractAt(
+      name: "UPVoteTreasury",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.UPVoteTreasury>;
 
     deployContract(
       name: "Ownable",
@@ -303,6 +339,10 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.MockERC20>;
     deployContract(
+      name: "MockFeeOnTransferERC20",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.MockFeeOnTransferERC20>;
+    deployContract(
       name: "MockRouter",
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.MockRouter>;
@@ -314,6 +354,18 @@ declare module "hardhat/types/runtime" {
       name: "LaunchToken",
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.LaunchToken>;
+    deployContract(
+      name: "IERC20",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.IERC20>;
+    deployContract(
+      name: "Ownable",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.Ownable>;
+    deployContract(
+      name: "UPVoteTreasury",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.UPVoteTreasury>;
 
     deployContract(
       name: "Ownable",
@@ -416,6 +468,11 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.MockERC20>;
     deployContract(
+      name: "MockFeeOnTransferERC20",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.MockFeeOnTransferERC20>;
+    deployContract(
       name: "MockRouter",
       args: any[],
       signerOrOptions?: ethers.Signer | DeployContractOptions
@@ -430,6 +487,21 @@ declare module "hardhat/types/runtime" {
       args: any[],
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.LaunchToken>;
+    deployContract(
+      name: "IERC20",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.IERC20>;
+    deployContract(
+      name: "Ownable",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.Ownable>;
+    deployContract(
+      name: "UPVoteTreasury",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.UPVoteTreasury>;
 
     // default types
     getContractFactory(

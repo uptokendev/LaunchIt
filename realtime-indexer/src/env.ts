@@ -16,10 +16,18 @@ export const ENV = {
   FACTORY_ADDRESS_97: process.env.FACTORY_ADDRESS_97 || "",
   FACTORY_ADDRESS_56: process.env.FACTORY_ADDRESS_56 || "",
 
+  // UPVoteTreasury addresses (optional; if not set, vote indexing is disabled for that chain)
+  VOTE_TREASURY_ADDRESS_97: process.env.VOTE_TREASURY_ADDRESS_97 || "",
+  VOTE_TREASURY_ADDRESS_56: process.env.VOTE_TREASURY_ADDRESS_56 || "",
+
   // Indexing window controls
   // Set FACTORY_START_BLOCK_97 to the factory deployment block (BSC testnet: 83444786 in your current deployment).
   FACTORY_START_BLOCK_97: Number(process.env.FACTORY_START_BLOCK_97 || 0),
   FACTORY_START_BLOCK_56: Number(process.env.FACTORY_START_BLOCK_56 || 0),
+
+  // VoteTreasury start blocks (optional; if not set, fallback to latest - LOOKBACK)
+  VOTE_TREASURY_START_BLOCK_97: Number(process.env.VOTE_TREASURY_START_BLOCK_97 || 0),
+  VOTE_TREASURY_START_BLOCK_56: Number(process.env.VOTE_TREASURY_START_BLOCK_56 || 0),
   // If FACTORY_START_BLOCK_* is not set, we fallback to (latest - FACTORY_LOOKBACK_BLOCKS)
   FACTORY_LOOKBACK_BLOCKS: Number(process.env.FACTORY_LOOKBACK_BLOCKS || 250000),
 

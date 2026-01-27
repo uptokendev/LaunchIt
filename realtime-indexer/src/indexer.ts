@@ -1,7 +1,7 @@
 import { ethers } from "ethers";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
-import { LAUNCH_FACTORY_ABI, LAUNCH_CAMPAIGN_ABI } from "./abis.js";
+import { LAUNCH_FACTORY_ABI, LAUNCH_CAMPAIGN_ABI, UP_VOTE_TREASURY_ABI } from "./abis.js";
 import { TIMEFRAMES, bucketStart, TF } from "./timeframes.js";
 import { publishTrade, publishCandle, publishStats } from "./ably.js";
 
@@ -119,6 +119,8 @@ type ChainCfg = {
   rpcHttp: string; // comma-separated list
   factoryAddress?: string;
   factoryStartBlock?: number;
+  voteTreasuryAddress?: string;
+  voteTreasuryStartBlock?: number;
 };
 
 const CHAINS: ChainCfg[] = [
@@ -126,7 +128,9 @@ const CHAINS: ChainCfg[] = [
     chainId: 97,
     rpcHttp: ENV.BSC_RPC_HTTP_97,
     factoryAddress: ENV.FACTORY_ADDRESS_97 || undefined,
-    factoryStartBlock: ENV.FACTORY_START_BLOCK_97 || undefined
+    factoryStartBlock: ENV.FACTORY_START_BLOCK_97 || undefined,
+    voteTreasuryAddress: ENV.VOTE_TREASURY_ADDRESS_97 || undefined,
+    voteTreasuryStartBlock: ENV.VOTE_TREASURY_START_BLOCK_97 || undefined
   }
   // enable later:
   // {
@@ -261,6 +265,111 @@ async function insertTrade(row: {
   return { tokenAmount, bnbAmount, priceBnb };
 }
 
+async function insertVote(row: {
+  chainId: number;
+  campaign: string;
+  voter: string;
+  asset: string; // address(0) for native BNB
+  amountRaw: bigint;
+  meta: string; // bytes32 hex
+  txHash: string;
+  logIndex: number;
+  blockNumber: number;
+  blockTime: Date;
+}) {
+  await pool.query(
+    `insert into public.votes(
+        chain_id,campaign_address,voter_address,asset_address,amount_raw,
+        tx_hash,log_index,block_number,block_timestamp,meta,status
+     ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'confirmed')
+     on conflict (chain_id,tx_hash,log_index) do nothing`,
+    [
+      row.chainId,
+      row.campaign.toLowerCase(),
+      row.voter.toLowerCase(),
+      row.asset.toLowerCase(),
+      row.amountRaw.toString(),
+      row.txHash.toLowerCase(),
+      row.logIndex,
+      row.blockNumber,
+      row.blockTime,
+      row.meta.toLowerCase()
+    ]
+  );
+}
+
+async function patchVoteAggregates(chainId: number, campaign: string) {
+  // Recompute aggregates for a single campaign. This is intentionally simple for v1.
+  // If vote volume grows, we can switch to bucketed incremental aggregates.
+  const r = await pool.query(
+    `with v as (
+       select
+         count(*) filter (where block_timestamp >= now() - interval '1 hour') as votes_1h,
+         count(*) filter (where block_timestamp >= now() - interval '24 hours') as votes_24h,
+         count(*) filter (where block_timestamp >= now() - interval '7 days') as votes_7d,
+         count(*) as votes_all_time,
+         count(*) filter (
+           where block_timestamp >= now() - interval '24 hours'
+         ) as b0,
+         count(*) filter (
+           where block_timestamp < now() - interval '24 hours'
+             and block_timestamp >= now() - interval '48 hours'
+         ) as b1,
+         count(*) filter (
+           where block_timestamp < now() - interval '48 hours'
+             and block_timestamp >= now() - interval '72 hours'
+         ) as b2,
+         max(block_timestamp) as last_vote_at
+       from public.votes
+       where chain_id=$1 and campaign_address=$2 and status='confirmed'
+     )
+     select
+       coalesce(votes_1h,0)::int as votes_1h,
+       coalesce(votes_24h,0)::int as votes_24h,
+       coalesce(votes_7d,0)::int as votes_7d,
+       coalesce(votes_all_time,0)::int as votes_all_time,
+       (coalesce(b0,0) * 1.0 + coalesce(b1,0) * 0.5 + coalesce(b2,0) * 0.25) as trending_score,
+       last_vote_at
+     from v`,
+    [chainId, campaign.toLowerCase()]
+  );
+
+  const x = r.rows[0] || {
+    votes_1h: 0,
+    votes_24h: 0,
+    votes_7d: 0,
+    votes_all_time: 0,
+    trending_score: 0,
+    last_vote_at: null
+  };
+
+  await pool.query(
+    `insert into public.vote_aggregates(
+        chain_id,campaign_address,
+        votes_1h,votes_24h,votes_7d,votes_all_time,trending_score,
+        last_vote_at,updated_at
+     ) values($1,$2,$3,$4,$5,$6,$7,$8,now())
+     on conflict (chain_id,campaign_address) do update set
+       votes_1h=excluded.votes_1h,
+       votes_24h=excluded.votes_24h,
+       votes_7d=excluded.votes_7d,
+       votes_all_time=excluded.votes_all_time,
+       trending_score=excluded.trending_score,
+       last_vote_at=excluded.last_vote_at,
+       updated_at=now()`,
+    [
+      chainId,
+      campaign.toLowerCase(),
+      Number(x.votes_1h || 0),
+      Number(x.votes_24h || 0),
+      Number(x.votes_7d || 0),
+      Number(x.votes_all_time || 0),
+      String(x.trending_score || 0),
+      x.last_vote_at
+    ]
+  );
+}
+
 async function upsertCandle(
   chainId: number,
   campaign: string,
@@ -391,6 +500,76 @@ async function scanFactoryRange(
       const name = String((parsed.args as any).name);
       const symbol = String((parsed.args as any).symbol);
       await upsertCampaign(chain.chainId, campaign, token, creator, name, symbol, log.blockNumber);
+    }
+
+    await setStateMax(chain.chainId, cursor, end + 1);
+  }
+}
+
+async function scanVoteTreasuryRange(
+  provider: ethers.JsonRpcProvider,
+  chain: ChainCfg,
+  fromBlock: number,
+  toBlock: number
+) {
+  if (!chain.voteTreasuryAddress) return;
+
+  const iface = new ethers.Interface(UP_VOTE_TREASURY_ABI);
+  const eventFrag = iface.getEvent("VoteCast");
+  if (!eventFrag) throw new Error("Event VoteCast not found in UP_VOTE_TREASURY_ABI");
+  const topic0 = eventFrag.topicHash;
+
+  const cursor = "votes";
+  const step = ENV.LOG_CHUNK_SIZE;
+
+  for (let start = fromBlock; start <= toBlock; start += step) {
+    const end = Math.min(toBlock, start + step - 1);
+
+    const logs = await getLogsSafe(provider, {
+      address: chain.voteTreasuryAddress,
+      fromBlock: start,
+      toBlock: end,
+      topics: [topic0]
+    });
+
+    if (logs.length) {
+      const blkNums = Array.from(new Set(logs.map((l) => l.blockNumber)));
+      const blockTimes = new Map<number, Date>();
+      for (const bn of blkNums) {
+        const b = await provider.getBlock(bn);
+        blockTimes.set(bn, new Date(Number(b?.timestamp || 0) * 1000));
+      }
+
+      const touched = new Set<string>();
+      for (const log of logs) {
+        const parsed = iface.parseLog(log);
+        if (!parsed) continue;
+
+        const campaign = String((parsed.args as any).campaign);
+        const voter = String((parsed.args as any).voter);
+        const asset = String((parsed.args as any).asset);
+        const amountPaid = (parsed.args as any).amountPaid as bigint;
+        const meta = String((parsed.args as any).meta);
+
+        await insertVote({
+          chainId: chain.chainId,
+          campaign,
+          voter,
+          asset,
+          amountRaw: amountPaid,
+          meta,
+          txHash: log.transactionHash,
+          logIndex: log.index,
+          blockNumber: log.blockNumber,
+          blockTime: blockTimes.get(log.blockNumber) || new Date(0)
+        });
+
+        touched.add(campaign.toLowerCase());
+      }
+
+      for (const c of touched) {
+        await patchVoteAggregates(chain.chainId, c);
+      }
     }
 
     await setStateMax(chain.chainId, cursor, end + 1);
@@ -709,6 +888,25 @@ async function runIndexerCore(opts: { mode: "normal" | "repair"; lookbackBlocks:
       await withProviderRetry((p) => syncFactoryCampaignsByCall(p, chain));
     } catch (e) {
       console.error("scanFactory error (all RPCs failed)", { chainId: chain.chainId }, e);
+    }
+
+    // ---------------- VoteTreasury scan ----------------
+    try {
+      if (chain.voteTreasuryAddress) {
+        const cursor = "votes";
+        const state = await getState(chain.chainId, cursor);
+        const windowStart = Math.max(0, target - opts.lookbackBlocks);
+
+        // Prefer configured start block, otherwise fallback to rolling lookback.
+        const startHint = chain.voteTreasuryStartBlock || 0;
+        const from = opts.mode === "repair"
+          ? Math.max(windowStart, Math.max(0, state - opts.rewindBlocks))
+          : (state > 0 ? state : (startHint > 0 ? startHint : windowStart));
+
+        await withProviderRetry((p) => scanVoteTreasuryRange(p, chain, from, target));
+      }
+    } catch (e) {
+      console.error("scanVoteTreasury error (all RPCs failed)", { chainId: chain.chainId }, e);
     }
 
     // ---------------- Campaign scans ----------------

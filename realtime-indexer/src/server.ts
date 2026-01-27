@@ -136,6 +136,71 @@ app.get("/api/token/:campaign/candles", wrap(async (req, res) => {
 
   res.json(r.rows.reverse());
 }));
+
+// ---------------------------------------------
+// Votes + Featured
+// ---------------------------------------------
+
+// /api/votes?chainId=97&campaignAddress=0x..&voter=0x..&limit=50
+app.get("/api/votes", wrap(async (req, res) => {
+  const chainId = Number(req.query.chainId || 97);
+  const campaign = String(req.query.campaignAddress || "").toLowerCase();
+  const voter = String(req.query.voter || "").toLowerCase();
+  const limit = Math.min(Number(req.query.limit || 50), 200);
+
+  const where: string[] = ["chain_id=$1", "status='confirmed'"];
+  const params: any[] = [chainId];
+  let p = 2;
+
+  if (campaign) {
+    where.push(`campaign_address=$${p++}`);
+    params.push(campaign);
+  }
+  if (voter) {
+    where.push(`voter_address=$${p++}`);
+    params.push(voter);
+  }
+
+  const r = await pool.query(
+    `select
+       chain_id,campaign_address,voter_address,asset_address,amount_raw,
+       tx_hash,log_index,block_number,block_timestamp,meta
+     from public.votes
+     where ${where.join(" and ")}
+     order by block_number desc, log_index desc
+     limit $${p}`,
+    [...params, limit]
+  );
+
+  res.json(r.rows);
+}));
+
+// /api/featured?chainId=97&sort=trending|24h|7d|all&limit=50
+app.get("/api/featured", wrap(async (req, res) => {
+  const chainId = Number(req.query.chainId || 97);
+  const sort = String(req.query.sort || "trending");
+  const limit = Math.min(Number(req.query.limit || 50), 200);
+
+  const orderBy =
+    sort === "24h" ? "votes_24h desc" :
+    sort === "7d" ? "votes_7d desc" :
+    sort === "all" ? "votes_all_time desc" :
+    "trending_score desc";
+
+  const r = await pool.query(
+    `select
+       chain_id,campaign_address,
+       votes_1h,votes_24h,votes_7d,votes_all_time,
+       trending_score,last_vote_at,updated_at
+     from public.vote_aggregates
+     where chain_id=$1
+     order by ${orderBy}, campaign_address asc
+     limit $2`,
+    [chainId, limit]
+  );
+
+  res.json(r.rows);
+}));
 app.use((err: any, _req: any, res: any, _next: any) => {
   console.error("API error:", err);
   res.status(500).json({ ok: false, error: err?.message || String(err) });

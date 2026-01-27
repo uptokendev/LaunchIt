@@ -12,3 +12,8 @@ export const LAUNCH_CAMPAIGN_ABI = [
   "event TokensSold(address indexed seller,uint256 amountIn,uint256 payout)",
   "event CampaignFinalized(address indexed caller,uint256 liquidityTokens,uint256 liquidityBnb,uint256 protocolFee,uint256 creatorPayout)"
 ];
+
+// UPVoteTreasury (paid upvote events)
+export const UP_VOTE_TREASURY_ABI = [
+  "event VoteCast(address indexed campaign,address indexed voter,address indexed asset,uint256 amountPaid,bytes32 meta)"
+];

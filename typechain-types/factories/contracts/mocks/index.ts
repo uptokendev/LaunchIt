@@ -2,4 +2,5 @@
 /* tslint:disable */
 /* eslint-disable */
 export { MockERC20__factory } from "./MockERC20__factory";
+export { MockFeeOnTransferERC20__factory } from "./MockFeeOnTransferERC20__factory";
 export { MockRouter__factory } from "./MockRouter__factory";
