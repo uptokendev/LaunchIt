@@ -9,6 +9,7 @@ import { Link, useParams } from "react-router-dom";
 import { Copy, ExternalLink, Globe, ChevronDown } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
@@ -58,6 +59,30 @@ function getExplorerBase(chainId?: number): string {
   if (id === 97) return "https://testnet.bscscan.com";
   // Sensible default
   return "https://bscscan.com";
+}
+
+function shortenAddress(addr?: string | null): string {
+  const a = String(addr ?? "").trim();
+  if (!a) return "";
+  if (a.length <= 10) return a;
+  return `${a.slice(0, 6)}…${a.slice(-4)}`;
+}
+
+function formatTimeAgo(ts?: number | null): string {
+  if (ts == null) return "—";
+  const raw = Number(ts);
+  if (!Number.isFinite(raw) || raw <= 0) return "—";
+
+  // tolerate ms timestamps
+  const seconds = raw > 1e11 ? Math.floor(raw / 1000) : Math.floor(raw);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const diff = Math.max(0, nowSec - seconds);
+
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+  return `${Math.floor(diff / 604800)}w ago`;
 }
 
 const TokenDetails = () => {
@@ -125,6 +150,9 @@ const TokenDetails = () => {
   // Maker profiles for the Trades tab (best-effort; cached per address)
   const [makerProfiles, setMakerProfiles] = useState<Record<string, UserProfile | null>>({});
 
+  // Creator profile (best-effort; used in the header)
+  const [creatorProfile, setCreatorProfile] = useState<UserProfile | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -171,6 +199,33 @@ const TokenDetails = () => {
       cancelled = true;
     };
   }, [txs, wallet.chainId, makerProfiles]);
+
+  // Fetch creator profile (best-effort; do not block UI)
+  useEffect(() => {
+    const creator = String(campaign?.creator ?? "").trim();
+    if (!creator) {
+      setCreatorProfile(null);
+      return;
+    }
+
+    const chainIdNum = Number(wallet.chainId ?? 97);
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const p = await fetchUserProfile(chainIdNum, creator);
+        if (cancelled) return;
+        setCreatorProfile(p);
+      } catch {
+        if (cancelled) return;
+        setCreatorProfile(null);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [campaign?.creator, wallet.chainId]);
 
   // Load campaign + metrics based on :campaignAddress (preferred).
   // Backward-compatible fallback: if param is not a 0x address, treat it as symbol.
@@ -1535,13 +1590,51 @@ setTxs(next);
                         />
                       </Button>
                     )}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-6 md:h-7 px-2 md:px-3 text-[10px] md:text-xs"
-                    >
-                      Community
-                    </Button>
+                    {(() => {
+                      const creator = String(campaign?.creator ?? "").trim();
+                      if (!creator) return null;
+
+                      const display =
+                        (creatorProfile?.displayName
+                          ? String(creatorProfile.displayName).trim()
+                          : "") || shortenAddress(creator);
+
+                      const createdLabel = campaign?.createdAt
+                        ? formatTimeAgo(campaign.createdAt)
+                        : campaign?.timeAgo
+                        ? `${campaign.timeAgo}${String(campaign.timeAgo).includes("ago") ? "" : " ago"}`
+                        : "—";
+
+                      const initial = display ? display.slice(0, 1).toUpperCase() : "C";
+
+                      return (
+                        <div className="flex items-center gap-2">
+                          <Link
+                            to={`/profile?address=${creator}`}
+                            className="flex items-center gap-2 hover:opacity-90 transition-opacity max-w-[240px]"
+                          >
+                            <Avatar className="h-6 w-6 md:h-7 md:w-7">
+                              <AvatarImage
+                                src={creatorProfile?.avatarUrl || undefined}
+                                alt={display}
+                              />
+                              <AvatarFallback className="text-[10px] md:text-xs">
+                                {initial}
+                              </AvatarFallback>
+                            </Avatar>
+                            <span className="text-[10px] md:text-xs text-foreground/90 truncate">
+                              {display}
+                            </span>
+                          </Link>
+                          <span className="text-[10px] md:text-xs text-muted-foreground">
+                            •
+                          </span>
+                          <span className="text-[10px] md:text-xs text-muted-foreground">
+                            {createdLabel}
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>
