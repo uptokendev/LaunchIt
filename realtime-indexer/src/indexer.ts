@@ -26,10 +26,6 @@ function parseRpcList(v: string): string[] {
 
 function isRateLimitError(e: any): boolean {
   const msg = String(e?.shortMessage || e?.message || "").toLowerCase();
-
-  // ethers fetch wrapper sometimes surfaces this when an endpoint is down / rate-limited
-  if (msg.includes("exceeded maximum retry")) return true;
-  if (msg.includes("429")) return true;
   if (msg.includes("rate limit")) return true;
 
   // ethers v6 BAD_DATA wrapping JSON-RPC batch errors
@@ -401,6 +397,80 @@ async function scanFactoryRange(
   }
 }
 
+
+
+// ---------------------------------------------------------------------------
+// Robust campaign discovery
+// ---------------------------------------------------------------------------
+//
+// Some public RPCs can occasionally return incomplete eth_getLogs results.
+// If that happens during the factory scan, we may miss a CampaignCreated event
+// but still advance the factory cursor, causing the indexer to never learn about
+// that campaign (and therefore never index its trades).
+//
+// To make discovery deterministic, we also periodically pull the factory's
+// on-chain campaign registry (campaignsCount/getCampaign) and upsert any missing
+// rows into public.campaigns.
+//
+async function syncFactoryCampaignsByCall(
+  provider: ethers.JsonRpcProvider,
+  chain: ChainCfg
+) {
+  if (!chain.factoryAddress) return;
+
+  const factory = new ethers.Contract(chain.factoryAddress, LAUNCH_FACTORY_ABI, provider);
+
+  let countBn: bigint;
+  try {
+    countBn = (await factory.campaignsCount()) as bigint;
+  } catch (e) {
+    console.warn("syncFactoryCampaignsByCall: campaignsCount failed", { chainId: chain.chainId }, e);
+    return;
+  }
+
+  const count = Number(countBn);
+  if (!Number.isFinite(count) || count <= 0) return;
+
+  // Build a set of known campaigns (lowercased)
+  const r = await pool.query(
+    `select lower(campaign_address) as campaign
+       from public.campaigns
+      where chain_id=$1`,
+    [chain.chainId]
+  );
+  const known = new Set<string>(r.rows.map((x) => String(x.campaign)));
+
+  for (let i = 0; i < count; i++) {
+    let info: any;
+    try {
+      info = await factory.getCampaign(i);
+    } catch (e) {
+      // Skip invalid ids rather than failing the whole sync
+      continue;
+    }
+
+    const campaign = String(info?.campaign ?? info?.[0] ?? "").trim();
+    if (!campaign || campaign === ethers.ZeroAddress) continue;
+
+    const key = campaign.toLowerCase();
+    if (known.has(key)) continue;
+
+    const token = String(info?.token ?? info?.[1] ?? "").trim();
+    const creator = String(info?.creator ?? info?.[2] ?? "").trim();
+    const name = String(info?.name ?? info?.[3] ?? "").trim();
+    const symbol = String(info?.symbol ?? info?.[4] ?? "").trim();
+
+    await upsertCampaign(chain.chainId, campaign, token, creator, name, symbol, 0);
+    known.add(key);
+
+    console.log("Discovered missing campaign via factory registry", {
+      chainId: chain.chainId,
+      id: i,
+      campaign: key
+    });
+  }
+}
+
 async function scanCampaignRange(
   provider: ethers.JsonRpcProvider,
   chainId: number,
@@ -576,13 +646,8 @@ async function runIndexerCore(opts: { mode: "normal" | "repair"; lookbackBlocks:
 
     let rpcIdx = 0;
 
-    const staticNetwork = ethers.Network.from(chain.chainId);
-
     const makeProvider = () =>
       new ethers.JsonRpcProvider(rpcList[rpcIdx], undefined, {
-        // Pin network to avoid repeated chainId detection (reduces "failed to detect network" noise)
-        staticNetwork,
-
         // reduce batch eth_getLogs pressure on public endpoints
         batchMaxCount: 1,
         batchStallTime: 0
@@ -640,6 +705,8 @@ async function runIndexerCore(opts: { mode: "normal" | "repair"; lookbackBlocks:
         : Math.max(baselineStart, windowStart);
 
       await withProviderRetry((p) => scanFactoryRange(p, chain, from, target));
+      // Deterministic discovery: pull campaigns directly from the factory registry
+      await withProviderRetry((p) => syncFactoryCampaignsByCall(p, chain));
     } catch (e) {
       console.error("scanFactory error (all RPCs failed)", { chainId: chain.chainId }, e);
     }

@@ -1,5 +1,10 @@
 export const LAUNCH_FACTORY_ABI = [
-  "event CampaignCreated(uint256 indexed id,address indexed campaign,address indexed token,address creator,string name,string symbol)"
+  // events
+  "event CampaignCreated(uint256 indexed id,address indexed campaign,address indexed token,address creator,string name,string symbol)",
+
+  // view helpers for robust campaign discovery (avoids missing events due to RPC log issues)
+  "function campaignsCount() view returns (uint256)",
+  "function getCampaign(uint256 id) view returns (tuple(address campaign,address token,address creator,string name,string symbol,string logoURI,string xAccount,string website,string extraLink,uint64 createdAt))"
 ];
 
 export const LAUNCH_CAMPAIGN_ABI = [
