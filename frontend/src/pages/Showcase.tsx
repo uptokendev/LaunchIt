@@ -17,7 +17,7 @@ const Showcase = () => {
   return (
     <div className="h-full flex flex-col relative">
       {/* Featured list sits directly under the ticker (TopBar) */}
-      <div className="flex-none">
+      <div className="flex-none pt-[20px]">
         <FeaturedCampaigns />
       </div>
 

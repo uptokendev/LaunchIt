@@ -205,9 +205,9 @@ export function FeaturedCampaigns({ chainId = 97, limit = 10 }: { chainId?: numb
     return (
       <div className="mb-4 md:mb-6">
         <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-sm md:text-base font-semibold tracking-wide">Featured Campaigns</h2>
-          <span className="text-xs text-muted-foreground">Top {limit}</span>
-        </div>
+  <h2 className="text-sm md:text-base font-semibold tracking-wide">Featured Coins</h2>
+  <span className="text-xs text-muted-foreground">Top {limit}</span>
+</div>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4">
           {Array.from({ length: limit }).map((_, i) => (
             <div key={i} className="h-28 md:h-32 rounded-[1.25rem] border border-border/40 bg-card" />
@@ -222,7 +222,7 @@ export function FeaturedCampaigns({ chainId = 97, limit = 10 }: { chainId?: numb
   return (
     <div className="mb-4 md:mb-6">
       <div className="mb-2 flex items-center justify-between">
-        <h2 className="text-sm md:text-base font-semibold tracking-wide">Featured Campaigns</h2>
+        <h2 className="text-sm md:text-base font-semibold tracking-wide">Featured Coins</h2>
         <span className="text-xs text-muted-foreground">Top {Math.min(limit, hydrated.length)}</span>
       </div>
 
