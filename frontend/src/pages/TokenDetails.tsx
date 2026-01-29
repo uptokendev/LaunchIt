@@ -136,11 +136,23 @@ const TokenDetails = () => {
     }
   }, [displayDenom]);
 
+
+
   // Launchpad hooks + state for the on-chain data
   const { fetchCampaigns, fetchCampaignSummary, fetchCampaignMetrics, fetchCampaignActivity, buyTokens, sellTokens } = useLaunchpad();
   const wallet = useWallet();
-  const chainIdForStorage = useMemo(() => getActiveChainId(wallet.chainId), [wallet.chainId]);
   const [campaign, setCampaign] = useState<CampaignInfo | null>(null);
+  // Match carousel behavior: prefer the campaign's chainId when available (prevents wrong-network keys)
+const chainIdForStorage = useMemo(() => {
+  const campaignChainId = Number((campaign as any)?.chainId ?? 0);
+  return getActiveChainId(campaignChainId || wallet.chainId);
+}, [campaign, wallet.chainId]);
+
+const canonicalCampaignAddress = useMemo(() => {
+  const addr = String((campaign as any)?.campaign ?? "").trim();
+  return /^0x[a-fA-F0-9]{40}$/.test(addr) ? addr.toLowerCase() : "";
+}, [campaign]);
+  
   const [metrics, setMetrics] = useState<CampaignMetrics | null>(null);
   const [summary, setSummary] = useState<CampaignSummary | null>(null);
   const [activity, setActivity] = useState<CampaignActivity | null>(null);
@@ -1852,10 +1864,10 @@ style={!isMobile ? { flex: "2" } : undefined}
               <div className="flex items-center gap-2 w-full md:w-auto md:justify-end">
                 {!isDexStage && (
                   <AthBar
-                    currentLabel={marketCapUsdLabel ?? undefined}
-                    storageKey={`ath:${String(chainIdForStorage)}:${String((campaignAddress ?? campaign?.campaign ?? "")).toLowerCase()}`}
-                    className="w-full md:w-auto md:max-w-[320px]"
-                  />
+  currentLabel={marketCapUsdLabel ?? undefined}
+  storageKey={`ath:${String(chainIdForStorage)}:${String((campaignAddress ?? campaign?.campaign ?? "")).toLowerCase()}`}
+  className="w-full md:w-auto md:max-w-[320px]"
+/>
                 )}
 
                 {isDexStage && dexBaseUrl && (
