@@ -57,7 +57,13 @@ export default async function handler(req, res) {
 
       return json(res, 200, { profile: rows[0] ?? null });
     } catch (e) {
+      // Common deployment footguns: missing table/columns after a new migration.
+      // Don't break the whole frontend; return an empty profile and log the real error.
+      const code = e?.code;
       console.error("[api/profile GET]", e);
+      if (code === "42P01" || code === "42703") {
+        return json(res, 200, { profile: null, warning: "DB schema missing profile tables/columns" });
+      }
       return json(res, 500, { error: "Server error" });
     }
   }

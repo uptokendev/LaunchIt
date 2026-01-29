@@ -76,7 +76,11 @@ export default async function handler(req, res) {
 
       return json(res, 200, { items: rows });
     } catch (e) {
+      const code = e?.code;
       console.error("[api/comments GET]", e);
+      if (code === "42P01" || code === "42703") {
+        return json(res, 200, { items: [], warning: "DB schema missing comments/profile tables/columns" });
+      }
       return json(res, 500, { error: "Server error" });
     }
   }
