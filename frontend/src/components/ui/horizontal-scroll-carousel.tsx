@@ -768,32 +768,6 @@ const CardView = ({
 
   const barWidthPx = Math.round(Math.max(110, Math.min(170, cardWidth * 0.45)));
 
-  useEffect(() => {
-    // Only log for the centered card to avoid console spam.
-    if (!isCentered) return;
-
-    console.debug("[ATH Carousel]", {
-      chainIdForStorage,
-      campaignAddress: campaignAddr,
-      bnbUsd: bnbUsdPrice,
-      marketCapLabel: card.marketCap,
-      marketCapUsdLabel_fromCard: card.marketCapUsdLabel,
-      rt_marketcapBnb: rtStats?.marketcapBnb,
-      marketCapUsdLabelPrecise,
-      mcapDisplay,
-    });
-  }, [
-    isCentered,
-    chainIdForStorage,
-    campaignAddr,
-    bnbUsdPrice,
-    card.marketCap,
-    card.marketCapUsdLabel,
-    rtStats?.marketcapBnb,
-    marketCapUsdLabelPrecise,
-    mcapDisplay,
-  ]);
-
   return (
     <div
       className="relative cursor-pointer transition-[transform,filter,opacity] duration-500 ease-out will-change-transform"
