@@ -22,7 +22,7 @@ export const navItems: NavItem[] = [
   { icon: carouselIcon, label: "Showcase", path: "/" },
   { icon: Plus, label: "Create", path: "/create" },
   { icon: upArrowIcon, label: "UP Dashboard", path: "/up-dashboard" },
-  { icon: Trophy, label: "League", path: "/league" },
+  { icon: Trophy, label: "UP Only League", path: "/league" },
   { icon: userIcon, label: "Profile", path: "/profile" },
 ];
 

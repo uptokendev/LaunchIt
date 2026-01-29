@@ -1,35 +1,97 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { ethers } from "ethers";
 import { GlowingEffect } from "@/components/ui/glowing-effect";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { useLaunchpad, type CampaignInfo } from "@/lib/launchpadClient";
 
-type LeagueRow = {
-  chainId: number;
-  campaignAddress: string;
-  votes24h?: number;
-  votes7d?: number;
-  votesAllTime?: number;
-  trendingScore?: string | number;
+type Period = "weekly" | "monthly" | "all_time";
+
+type LeagueBase = {
+  campaign_address: string;
+  name?: string | null;
+  symbol?: string | null;
+  logo_uri?: string | null;
 };
 
-type LeagueCard = {
-  row: LeagueRow;
-  campaign: CampaignInfo;
-  creatorProfile?: { displayName?: string | null; avatarUrl?: string | null } | null;
+type GraduationRow = LeagueBase & {
+  duration_seconds: number;
+  unique_buyers: number;
+  sells_count: number;
+};
+
+type LargestBuyRow = LeagueBase & {
+  buyer_address: string;
+  bnb_amount_raw: string;
+  tx_hash: string;
+  log_index: number;
+};
+
+type LeagueResponse<T> = {
+  chainId: number;
+  category: string;
+  period: Period;
+  items: T[];
 };
 
 const isAddress = (s?: string) => /^0x[a-fA-F0-9]{40}$/.test(String(s ?? "").trim());
-const shortAddr = (a: string) => (a && a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a);
+const shortAddr = (a: string) => (a && a.length > 12 ? a.slice(0, 6) + "..." + a.slice(-4) : a);
 
-export function LeagueCampaigns({ chainId = 97, limit = 5 }: { chainId?: number; limit?: number }) {
+function formatDuration(seconds?: number | null) {
+  const s = Math.max(0, Number(seconds ?? 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = Math.floor(s % 60);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${sec}s`;
+  return `${sec}s`;
+}
+
+function formatBnbFromRaw(raw?: string | null) {
+  try {
+    const v = BigInt(String(raw ?? "0"));
+    const n = Number(ethers.formatUnits(v, 18));
+    if (!Number.isFinite(n)) return "0";
+    if (n >= 100) return n.toFixed(2);
+    if (n >= 1) return n.toFixed(4);
+    return n.toFixed(6);
+  } catch {
+    return "0";
+  }
+}
+
+function TokenLine({ row }: { row: LeagueBase }) {
+  const title = (row.name ? String(row.name) : "") || "Unknown";
+  const sym = (row.symbol ? String(row.symbol) : "") || "";
+  const initial = sym ? sym.slice(0, 1).toUpperCase() : "T";
+
+  return (
+    <div className="flex items-center gap-2 min-w-0">
+      <Avatar className="h-7 w-7">
+        <AvatarImage src={row.logo_uri || undefined} />
+        <AvatarFallback>{initial}</AvatarFallback>
+      </Avatar>
+      <div className="min-w-0">
+        <div className="text-sm font-semibold truncate">
+          {title} {sym ? <span className="text-muted-foreground">({sym})</span> : null}
+        </div>
+        <div className="text-[11px] text-muted-foreground truncate">{row.campaign_address}</div>
+      </div>
+    </div>
+  );
+}
+
+export function LeagueCampaigns({ chainId = 97, limit = 3 }: { chainId?: number; limit?: number }) {
   const navigate = useNavigate();
-  const { fetchCampaigns } = useLaunchpad();
 
-  const [rows, setRows] = useState<LeagueRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [cards, setCards] = useState<LeagueCard[]>([]);
-  const [profilesByAddress, setProfilesByAddress] = useState<Record<string, any>>({});
+  const [straightUp, setStraightUp] = useState<GraduationRow[]>([]);
+  const [fastest, setFastest] = useState<GraduationRow[]>([]);
+  const [largestBuys, setLargestBuys] = useState<LargestBuyRow[]>([]);
+
+  const qs = useMemo(
+    () => `chainId=${encodeURIComponent(String(chainId))}&period=weekly&limit=${encodeURIComponent(String(limit))}`,
+    [chainId, limit]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -37,15 +99,23 @@ export function LeagueCampaigns({ chainId = 97, limit = 5 }: { chainId?: number;
     const load = async () => {
       try {
         setLoading(true);
-        const r = await fetch(
-          `/api/featured?chainId=${encodeURIComponent(String(chainId))}&sort=7d&limit=${encodeURIComponent(String(limit))}`
-        );
-        const j = await r.json();
-        const items: LeagueRow[] = Array.isArray(j?.items) ? j.items : [];
-        if (!cancelled) setRows(items);
+        const [a, b, c] = await Promise.all([
+          fetch(`/api/league?${qs}&category=straight_up`).then((r) => r.json()),
+          fetch(`/api/league?${qs}&category=fastest_graduation`).then((r) => r.json()),
+          fetch(`/api/league?${qs}&category=largest_buy`).then((r) => r.json()),
+        ]);
+
+        if (cancelled) return;
+        setStraightUp((a as LeagueResponse<GraduationRow>)?.items ?? []);
+        setFastest((b as LeagueResponse<GraduationRow>)?.items ?? []);
+        setLargestBuys((c as LeagueResponse<LargestBuyRow>)?.items ?? []);
       } catch (e) {
-        console.error("[LeagueCampaigns] failed to load /api/featured", e);
-        if (!cancelled) setRows([]);
+        console.error("[LeagueCampaigns] failed to load /api/league", e);
+        if (!cancelled) {
+          setStraightUp([]);
+          setFastest([]);
+          setLargestBuys([]);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -55,120 +125,29 @@ export function LeagueCampaigns({ chainId = 97, limit = 5 }: { chainId?: number;
     return () => {
       cancelled = true;
     };
-  }, [chainId, limit]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const build = async () => {
-      if (!rows.length) {
-        setCards([]);
-        return;
-      }
-
-      try {
-        const campaigns = await fetchCampaigns();
-        const byCampaign = new Map<string, CampaignInfo>();
-        for (const c of campaigns ?? []) {
-          const addr = String((c as any).campaign ?? "").toLowerCase();
-          if (isAddress(addr)) byCampaign.set(addr, c);
-        }
-
-        const out: LeagueCard[] = [];
-        for (const row of rows) {
-          const addr = String(row.campaignAddress ?? "").toLowerCase();
-          const campaign = byCampaign.get(addr);
-          if (!campaign) continue;
-          out.push({ row, campaign, creatorProfile: null });
-        }
-
-        if (!cancelled) setCards(out);
-      } catch (e) {
-        console.error("[LeagueCampaigns] failed to build cards", e);
-        if (!cancelled) setCards([]);
-      }
-    };
-
-    build();
-    return () => {
-      cancelled = true;
-    };
-  }, [rows, fetchCampaigns]);
-
-  // Best-effort creator profile hydration
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadProfiles = async () => {
-      const creators = Array.from(
-        new Set(
-          cards
-            .map((c) => String((c.campaign as any).creator ?? "").toLowerCase())
-            .filter((a) => isAddress(a))
-        )
-      );
-
-      const missing = creators.filter((a) => !profilesByAddress[a]);
-      if (!missing.length) return;
-
-      try {
-        const results = await Promise.all(
-          missing.map(async (addr) => {
-            try {
-              const r = await fetch(
-                `/api/profile?chainId=${encodeURIComponent(String(chainId))}&address=${encodeURIComponent(addr)}`
-              );
-              const j = await r.json();
-              return [addr, j?.profile ?? null] as const;
-            } catch {
-              return [addr, null] as const;
-            }
-          })
-        );
-
-        if (cancelled) return;
-        setProfilesByAddress((prev) => {
-          const next = { ...prev };
-          for (const [addr, prof] of results) next[addr] = prof;
-          return next;
-        });
-      } catch (e) {
-        console.error("[LeagueCampaigns] profile fetch failed", e);
-      }
-    };
-
-    loadProfiles();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cards, chainId]);
-
-  const hydrated = useMemo(() => {
-    return cards.map((c) => {
-      const creator = String((c.campaign as any).creator ?? "").toLowerCase();
-      const profile = creator ? profilesByAddress[creator] ?? null : null;
-      return { ...c, creatorProfile: profile };
-    });
-  }, [cards, profilesByAddress]);
+  }, [qs]);
 
   if (loading) {
     return (
       <div className="mt-4 md:mt-6">
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-sm md:text-base font-semibold tracking-wide">UP Only League</h2>
-          <span className="text-xs text-muted-foreground">Top {limit}</span>
+          <span className="text-xs text-muted-foreground">This week</span>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4">
-          {Array.from({ length: limit }).map((_, i) => (
-            <div key={i} className="h-28 md:h-32 rounded-[1.25rem] border border-border/40 bg-card" />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="h-44 rounded-[1.25rem] border border-border/40 bg-card" />
           ))}
         </div>
       </div>
     );
   }
 
-  if (!hydrated.length) return null;
+  // If no data at all, don't render the section.
+  if (!straightUp.length && !fastest.length && !largestBuys.length) return null;
+
+  const panelClass =
+    "relative rounded-[1.25rem] border border-border/40 bg-card/70 p-4 text-left overflow-hidden hover:bg-card transition-colors";
 
   return (
     <div className="mt-4 md:mt-6">
@@ -183,54 +162,102 @@ export function LeagueCampaigns({ chainId = 97, limit = 5 }: { chainId?: number;
         </button>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4">
-        {hydrated.slice(0, limit).map((card, idx) => {
-          const campaignAddr = String((card.campaign as any).campaign ?? "").trim();
-          const creatorAddr = String((card.campaign as any).creator ?? "").trim();
-          const displayName =
-            (card.creatorProfile?.displayName ? String(card.creatorProfile.displayName).trim() : "") ||
-            (creatorAddr ? shortAddr(creatorAddr) : "—");
-          const initial = displayName ? displayName.slice(0, 1).toUpperCase() : "C";
-          const votes7d = Number(card.row.votes7d ?? 0);
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">
+        {/* Straight UP */}
+        <div className={panelClass}>
+          <GlowingEffect blur={18} spread={36} glow={true} disabled={false} movementDuration={1.6} className="pointer-events-none" />
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold">Straight UP</div>
+            <div className="text-[11px] text-muted-foreground">No sells</div>
+          </div>
 
-          return (
-            <button
-              key={campaignAddr}
-              type="button"
-              onClick={() => navigate(`/token/${campaignAddr}`)}
-              className="relative rounded-[1.25rem] border border-border/40 bg-card/70 p-3 md:p-4 text-left overflow-hidden hover:bg-card transition-colors"
-            >
-              <GlowingEffect
-                blur={18}
-                spread={40}
-                glow={true}
-                disabled={false}
-                movementDuration={1.6}
-                className="pointer-events-none"
-              />
-
-              <div className="absolute top-2 right-2 z-10 h-6 min-w-6 px-2 flex items-center justify-center rounded-full bg-card border-2" style={{ borderColor: "#affe00", color: "#affe00" }}>
-                {idx + 1}
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Avatar className="h-8 w-8">
-                  <AvatarImage src={card.creatorProfile?.avatarUrl ?? undefined} />
-                  <AvatarFallback>{initial}</AvatarFallback>
-                </Avatar>
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold truncate">{card.campaign.symbol}</div>
-                  <div className="text-[11px] text-muted-foreground truncate">{displayName}</div>
+          <div className="mt-3 space-y-3">
+            {straightUp.slice(0, limit).map((r, idx) => (
+              <button
+                key={r.campaign_address}
+                type="button"
+                onClick={() => navigate(`/token/${r.campaign_address}`)}
+                className="w-full text-left flex items-start justify-between gap-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <TokenLine row={r} />
                 </div>
-              </div>
+                <div className="text-right">
+                  <div className="text-sm font-semibold" style={{ color: "#affe00" }}>
+                    {idx + 1}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">{formatDuration(r.duration_seconds)}</div>
+                </div>
+              </button>
+            ))}
+            {!straightUp.length ? <div className="text-xs text-muted-foreground">No qualifiers yet.</div> : null}
+          </div>
+        </div>
 
-              <div className="mt-3 flex items-center justify-between">
-                <div className="text-[11px] text-muted-foreground">Votes (7d)</div>
-                <div className="text-sm font-semibold">{Number.isFinite(votes7d) ? votes7d : 0}</div>
-              </div>
-            </button>
-          );
-        })}
+        {/* Fastest */}
+        <div className={panelClass}>
+          <GlowingEffect blur={18} spread={36} glow={true} disabled={false} movementDuration={1.6} className="pointer-events-none" />
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold">Fastest Graduation</div>
+            <div className="text-[11px] text-muted-foreground">>= 25 buyers</div>
+          </div>
+
+          <div className="mt-3 space-y-3">
+            {fastest.slice(0, limit).map((r, idx) => (
+              <button
+                key={r.campaign_address}
+                type="button"
+                onClick={() => navigate(`/token/${r.campaign_address}`)}
+                className="w-full text-left flex items-start justify-between gap-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <TokenLine row={r} />
+                </div>
+                <div className="text-right">
+                  <div className="text-sm font-semibold" style={{ color: "#affe00" }}>
+                    {idx + 1}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">{formatDuration(r.duration_seconds)}</div>
+                </div>
+              </button>
+            ))}
+            {!fastest.length ? <div className="text-xs text-muted-foreground">No graduates yet.</div> : null}
+          </div>
+        </div>
+
+        {/* Largest buys */}
+        <div className={panelClass}>
+          <GlowingEffect blur={18} spread={36} glow={true} disabled={false} movementDuration={1.6} className="pointer-events-none" />
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold">Largest Buy</div>
+            <div className="text-[11px] text-muted-foreground">Bonding</div>
+          </div>
+
+          <div className="mt-3 space-y-3">
+            {largestBuys.slice(0, limit).map((r, idx) => (
+              <button
+                key={r.tx_hash + ":" + String(r.log_index)}
+                type="button"
+                onClick={() => navigate(`/token/${r.campaign_address}`)}
+                className="w-full text-left flex items-start justify-between gap-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <TokenLine row={r} />
+                  <div className="text-[11px] text-muted-foreground mt-1">
+                    Buyer: {isAddress(r.buyer_address) ? shortAddr(r.buyer_address) : "-"}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-sm font-semibold" style={{ color: "#affe00" }}>
+                    {idx + 1}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">{formatBnbFromRaw(r.bnb_amount_raw)} BNB</div>
+                </div>
+              </button>
+            ))}
+            {!largestBuys.length ? <div className="text-xs text-muted-foreground">No buys yet.</div> : null}
+          </div>
+        </div>
       </div>
     </div>
   );

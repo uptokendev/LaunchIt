@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import { ENV } from "./env.js";
 import { pool } from "./db.js";
-import { ablyRest, tokenChannel } from "./ably.js";
+import { ablyRest, tokenChannel, leagueChannel } from "./ably.js";
 import { runIndexerOnce } from "./indexer.js";
 import type { Request, Response, NextFunction, RequestHandler } from "express";
 
@@ -57,14 +57,29 @@ app.get("/health", async (_req, res) => {
 
 /**
  * Ably token auth endpoint
- * Request: /api/ably/token?chainId=97&campaign=0x...
- * Issues a TokenRequest limited to subscribe on that token’s channel.
+ *
+ * TokenDetails (per-campaign): /api/ably/token?chainId=97&campaign=0x...
+ * League (global):             /api/ably/token?chainId=97&scope=league
  */
 app.get("/api/ably/token", async (req, res) => {
   try {
     const chainId = Number(req.query.chainId || 97);
-    const campaign = String(req.query.campaign || "").toLowerCase();
+    const scope = String(req.query.scope || "token");
 
+    if (scope === "league") {
+      const channel = leagueChannel(chainId);
+      const capability = { [channel]: ["subscribe"] };
+
+      const tokenRequest = await ablyRest.auth.createTokenRequest({
+        clientId: "public",
+        capability: JSON.stringify(capability),
+        ttl: 60 * 60 * 1000, // 1 hour
+      });
+
+      return res.json(tokenRequest);
+    }
+
+    const campaign = String(req.query.campaign || "").toLowerCase();
     if (!/^0x[a-f0-9]{40}$/.test(campaign)) {
       return res.status(400).json({ error: "Invalid campaign address" });
     }
@@ -77,12 +92,12 @@ app.get("/api/ably/token", async (req, res) => {
       // Using a random clientId triggers Ably 40102 (mismatched clientId).
       clientId: "public",
       capability: JSON.stringify(capability),
-      ttl: 60 * 60 * 1000 // 1 hour
+      ttl: 60 * 60 * 1000, // 1 hour
     });
 
-    res.json(tokenRequest);
+    return res.json(tokenRequest);
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || String(e) });
+    return res.status(500).json({ error: e?.message || String(e) });
   }
 });
 
@@ -117,6 +132,113 @@ app.get("/api/token/:campaign/trades", wrap(async (req, res) => {
   );
 
   res.json(r.rows);
+}));
+
+
+// ---------------------------------------------
+// UP Only League (objective leaderboards)
+// ---------------------------------------------
+// /api/league?chainId=97&category=straight_up|fastest_graduation|largest_buy&period=weekly|monthly|all_time&limit=50
+app.get("/api/league", wrap(async (req, res) => {
+  const chainId = Number(req.query.chainId || 97);
+  const category = String(req.query.category || "fastest_graduation");
+  const period = String(req.query.period || "weekly");
+  const limit = Math.min(Number(req.query.limit || 50), 200);
+
+  const periodFilterCampaign =
+    period === "monthly"
+      ? "c.graduated_at_chain >= date_trunc('month', now()) and c.graduated_at_chain < date_trunc('month', now()) + interval '1 month'"
+      : period === "weekly"
+      ? "c.graduated_at_chain >= date_trunc('week', now()) and c.graduated_at_chain < date_trunc('week', now()) + interval '1 week'"
+      : "true";
+
+  const periodFilterTrades =
+    period === "monthly"
+      ? "t.block_time >= date_trunc('month', now()) and t.block_time < date_trunc('month', now()) + interval '1 month'"
+      : period === "weekly"
+      ? "t.block_time >= date_trunc('week', now()) and t.block_time < date_trunc('week', now()) + interval '1 week'"
+      : "true";
+
+  if (category === "largest_buy") {
+    // Largest single buy tx during bonding (measured in BNB, excludes creator/feeRecipient/campaign)
+    const r = await pool.query(
+      `select
+         t.campaign_address,
+         c.name,
+         c.symbol,
+         c.logo_uri,
+         c.creator_address,
+         c.fee_recipient_address,
+         t.wallet as buyer_address,
+         t.bnb_amount_raw as bnb_amount_raw,
+         t.tx_hash,
+         t.log_index,
+         t.block_number,
+         t.block_time
+       from public.curve_trades t
+       join public.campaigns c
+         on c.chain_id=t.chain_id and c.campaign_address=t.campaign_address
+       where t.chain_id=$1
+         and t.side='buy'
+         and ${periodFilterTrades}
+         and lower(t.wallet) <> lower(c.creator_address)
+         and (c.fee_recipient_address is null or lower(t.wallet) <> lower(c.fee_recipient_address))
+         and lower(t.wallet) <> lower(c.campaign_address)
+       order by (t.bnb_amount_raw::numeric) desc, t.block_number desc, t.log_index desc
+       limit $2`,
+      [chainId, limit]
+    );
+
+    return res.json({ chainId, category, period, items: r.rows });
+  }
+
+  const requireUniqueBuyers = category === "fastest_graduation";
+  const extra: string[] = [];
+  if (requireUniqueBuyers) extra.push("coalesce(s.unique_buyers,0) >= 25");
+  if (category === "straight_up") extra.push("coalesce(s.sells_count,0) = 0");
+  const extraWhere = extra.length ? `and ${extra.join(" and ")}` : "";
+
+  const r = await pool.query(
+    `with stats as (
+       select
+         t.chain_id,
+         t.campaign_address,
+         count(distinct case when t.side='buy' then t.wallet end) as unique_buyers,
+         sum(case when t.side='sell' then 1 else 0 end) as sells_count,
+         sum(case when t.side='buy' then (t.bnb_amount_raw::numeric) else 0 end) as buy_volume_raw
+       from public.curve_trades t
+       where t.chain_id=$1
+       group by t.chain_id, t.campaign_address
+     )
+     select
+       c.campaign_address,
+       c.creator_address,
+       c.fee_recipient_address,
+       c.token_address,
+       c.name,
+       c.symbol,
+       c.logo_uri,
+       c.created_at_chain,
+       c.graduated_at_chain,
+       c.graduated_block,
+       coalesce(s.unique_buyers,0)::int as unique_buyers,
+       coalesce(s.sells_count,0)::int as sells_count,
+       coalesce(s.buy_volume_raw,0)::text as buy_volume_raw,
+       extract(epoch from (c.graduated_at_chain - c.created_at_chain))::bigint as duration_seconds
+     from public.campaigns c
+     left join stats s
+       on s.chain_id=c.chain_id and s.campaign_address=c.campaign_address
+     where c.chain_id=$1
+       and c.created_at_chain is not null
+       and c.graduated_at_chain is not null
+       and ${periodFilterCampaign}
+       ${extraWhere}
+     order by duration_seconds asc nulls last, c.graduated_at_chain asc
+     limit $2`,
+    [chainId, limit]
+  );
+
+  return res.json({ chainId, category, period, items: r.rows });
 }));
 
 app.get("/api/token/:campaign/candles", wrap(async (req, res) => {

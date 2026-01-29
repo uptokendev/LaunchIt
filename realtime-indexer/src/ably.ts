@@ -7,6 +7,10 @@ export function tokenChannel(chainId: number, campaignAddress: string) {
   return `token:${chainId}:${campaignAddress.toLowerCase()}`;
 }
 
+export function leagueChannel(chainId: number) {
+  return `league:${chainId}`;
+}
+
 export async function publishTrade(chainId: number, campaign: string, msg: any) {
   const ch = ablyRest.channels.get(tokenChannel(chainId, campaign));
   await ch.publish("trade", msg);
@@ -20,4 +24,9 @@ export async function publishCandle(chainId: number, campaign: string, msg: any)
 export async function publishStats(chainId: number, campaign: string, msg: any) {
   const ch = ablyRest.channels.get(tokenChannel(chainId, campaign));
   await ch.publish("stats_patch", msg);
+}
+
+export async function publishLeague(chainId: number, event: string, msg: any) {
+  const ch = ablyRest.channels.get(leagueChannel(chainId));
+  await ch.publish(event, msg);
 }

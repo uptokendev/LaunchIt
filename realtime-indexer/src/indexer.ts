@@ -173,16 +173,17 @@ async function upsertCampaign(
   creator: string,
   name: string,
   symbol: string,
-  createdBlock: number
+  createdBlock: number,
+  createdAtChain: Date | null = null
 ) {
   // NOTE: campaigns lives in the *indexer* DB.
   // It is used for discovery + scanning and is separate from user-profile tables.
   // Current schema expects creator_address to be NOT NULL.
   await pool.query(
     `insert into public.campaigns(
-        chain_id,campaign_address,token_address,creator_address,name,symbol,created_block,is_active
+        chain_id,campaign_address,token_address,creator_address,name,symbol,created_block,created_at_chain,is_active
      )
-     values($1,$2,$3,$4,$5,$6,$7,true)
+     values($1,$2,$3,$4,$5,$6,$7,$8,true)
      on conflict (chain_id,campaign_address) do update
        set token_address=coalesce(excluded.token_address, public.campaigns.token_address),
            creator_address=coalesce(excluded.creator_address, public.campaigns.creator_address),
@@ -196,6 +197,12 @@ async function upsertCampaign(
                else least(public.campaigns.created_block, excluded.created_block)
              end
            ),
+           created_at_chain=(
+             case
+               when public.campaigns.created_at_chain is null then excluded.created_at_chain
+               else public.campaigns.created_at_chain
+             end
+           ),
            is_active=true,
            updated_at=now()`,
     [
@@ -205,10 +212,45 @@ async function upsertCampaign(
       creator.toLowerCase(),
       name,
       symbol,
-      createdBlock
+      createdBlock,
+      createdAtChain
     ]
   );
 }
+
+async function setCampaignGraduated(
+  chainId: number,
+  campaign: string,
+  graduatedBlock: number,
+  graduatedAt: Date,
+  txHash: string
+) {
+  await pool.query(
+    `update public.campaigns
+       set is_active=false,
+           graduated_block=$3,
+           graduated_at_chain=$4,
+           meta = coalesce(meta,'{}'::jsonb) || jsonb_build_object('graduatedTx', $5),
+           updated_at=now()
+     where chain_id=$1 and campaign_address=$2`,
+    [chainId, campaign.toLowerCase(), graduatedBlock, graduatedAt, txHash.toLowerCase()]
+  );
+}
+
+async function setCampaignFeeRecipient(
+  chainId: number,
+  campaign: string,
+  feeRecipient: string
+) {
+  await pool.query(
+    `update public.campaigns
+       set fee_recipient_address=coalesce(fee_recipient_address, $3),
+           updated_at=now()
+     where chain_id=$1 and campaign_address=$2`,
+    [chainId, campaign.toLowerCase(), feeRecipient.toLowerCase()]
+  );
+}
+
 
 async function listActiveCampaigns(chainId: number): Promise<Array<{ campaign: string; createdBlock: number }>> {
   const r = await pool.query(
@@ -491,6 +533,14 @@ async function scanFactoryRange(
       topics: [topic0]
     });
 
+    // Best-effort: store created_at_chain using block timestamp
+    const blkNums = Array.from(new Set(logs.map((l) => l.blockNumber)));
+    const blockTimes = new Map<number, Date>();
+    for (const bn of blkNums) {
+      const b = await provider.getBlock(bn);
+      blockTimes.set(bn, new Date(Number(b?.timestamp || 0) * 1000));
+    }
+
     for (const log of logs) {
       const parsed = iface.parseLog(log);
       if (!parsed) continue;
@@ -499,7 +549,7 @@ async function scanFactoryRange(
       const creator = String((parsed.args as any).creator);
       const name = String((parsed.args as any).name);
       const symbol = String((parsed.args as any).symbol);
-      await upsertCampaign(chain.chainId, campaign, token, creator, name, symbol, log.blockNumber);
+      await upsertCampaign(chain.chainId, campaign, token, creator, name, symbol, log.blockNumber, blockTimes.get(log.blockNumber) || null);
     }
 
     await setStateMax(chain.chainId, cursor, end + 1);
@@ -639,7 +689,11 @@ async function syncFactoryCampaignsByCall(
     const name = String(info?.name ?? info?.[3] ?? "").trim();
     const symbol = String(info?.symbol ?? info?.[4] ?? "").trim();
 
-    await upsertCampaign(chain.chainId, campaign, token, creator, name, symbol, 0);
+    const createdAtRaw = info?.createdAt ?? info?.[9];
+    const createdAtSec = createdAtRaw !== undefined && createdAtRaw !== null ? Number(createdAtRaw) : 0;
+    const createdAt = createdAtSec > 0 ? new Date(createdAtSec * 1000) : null;
+
+    await upsertCampaign(chain.chainId, campaign, token, creator, name, symbol, 0, createdAt);
     known.add(key);
 
     console.log("Discovered missing campaign via factory registry", {
@@ -661,14 +715,34 @@ async function scanCampaignRange(
 
   const buyFrag = iface.getEvent("TokensPurchased");
   const sellFrag = iface.getEvent("TokensSold");
-  if (!buyFrag || !sellFrag) throw new Error("Missing TokensPurchased/TokensSold in LAUNCH_CAMPAIGN_ABI");
+  const finFrag = iface.getEvent("CampaignFinalized");
+  if (!buyFrag || !sellFrag || !finFrag) throw new Error("Missing TokensPurchased/TokensSold/CampaignFinalized in LAUNCH_CAMPAIGN_ABI");
 
   const buyTopic = buyFrag.topicHash;
   const sellTopic = sellFrag.topicHash;
+  const finTopic = finFrag.topicHash;
 
   const cursor = `campaign:${campaign.toLowerCase()}`;
   const step = ENV.LOG_CHUNK_SIZE;
   const blockTimeCache = new Map<number, number>();
+
+  // Best-effort: hydrate campaign feeRecipient for anti-abuse checks (Largest Buys).
+  try {
+    const rr = await pool.query(
+      `select fee_recipient_address from public.campaigns where chain_id=$1 and campaign_address=$2`,
+      [chainId, campaign.toLowerCase()]
+    );
+    const existing = rr.rows?.[0]?.fee_recipient_address ? String(rr.rows[0].fee_recipient_address) : "";
+    if (!existing) {
+      const c = new ethers.Contract(campaign, LAUNCH_CAMPAIGN_ABI, provider);
+      const fr = String(await c.feeRecipient());
+      if (/^0x[a-fA-F0-9]{40}$/.test(fr)) {
+        await setCampaignFeeRecipient(chainId, campaign, fr);
+      }
+    }
+  } catch {
+    // ignore
+  }
 
   for (let start = fromBlock; start <= toBlock; start += step) {
     const end = Math.min(toBlock, start + step - 1);
@@ -677,7 +751,7 @@ async function scanCampaignRange(
       address: campaign,
       fromBlock: start,
       toBlock: end,
-      topics: [[buyTopic, sellTopic]]
+      topics: [[buyTopic, sellTopic, finTopic]]
     });
 
     logs.sort((a, b) => a.blockNumber - b.blockNumber || ((a.index ?? 0) - (b.index ?? 0)));
@@ -776,6 +850,9 @@ async function scanCampaignRange(
             await upsertCandle(chainId, campaign, tf, b, priceBnb, bnbAmount);
           }
         }
+      } else if (name === "CampaignFinalized") {
+        // Graduation marker for league categories
+        await setCampaignGraduated(chainId, campaign, log.blockNumber, new Date(tsSec * 1000), txHash);
       }
     }
 
