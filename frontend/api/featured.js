@@ -20,18 +20,25 @@ export default async function handler(req, res) {
 
     if (!Number.isFinite(chainId)) return json(res, 400, { error: "Invalid chainId" });
 
+    // IMPORTANT: Featured list is a *paid* placement via UPvote.
+    // We only surface campaigns that still exist in our campaigns table and are still in bonding
+    // (not graduated), to prevent old-factory / old-campaign addresses from showing up.
     const { rows } = await pool.query(
       `SELECT
-         chain_id AS "chainId",
-         campaign_address AS "campaignAddress",
-         votes_1h AS "votes1h",
-         votes_24h AS "votes24h",
-         votes_7d AS "votes7d",
-         votes_all_time AS "votesAllTime",
-         trending_score AS "trendingScore",
-         last_vote_at AS "lastVoteAt"
-       FROM vote_aggregates
-       WHERE chain_id = $1
+         va.chain_id AS "chainId",
+         va.campaign_address AS "campaignAddress",
+         va.votes_1h AS "votes1h",
+         va.votes_24h AS "votes24h",
+         va.votes_7d AS "votes7d",
+         va.votes_all_time AS "votesAllTime",
+         va.trending_score AS "trendingScore",
+         va.last_vote_at AS "lastVoteAt"
+       FROM vote_aggregates va
+       INNER JOIN campaigns c
+         ON c.chain_id = va.chain_id
+        AND c.campaign_address = va.campaign_address
+       WHERE va.chain_id = $1
+         AND (c.graduated_at_chain IS NULL)
        ORDER BY ${sortCol} DESC NULLS LAST
        LIMIT $2`,
       [chainId, limit]

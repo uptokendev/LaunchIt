@@ -7,10 +7,14 @@
 ALTER TABLE public.campaigns
   ADD COLUMN IF NOT EXISTS logo_uri text,
   ADD COLUMN IF NOT EXISTS created_at_chain timestamptz,
+  ADD COLUMN IF NOT EXISTS factory_address text,
   ADD COLUMN IF NOT EXISTS graduated_at_chain timestamptz,
   ADD COLUMN IF NOT EXISTS graduated_block bigint,
   ADD COLUMN IF NOT EXISTS fee_recipient_address text;
 
+
+CREATE INDEX IF NOT EXISTS campaigns_chain_factory_idx
+  ON public.campaigns(chain_id, factory_address);
 CREATE INDEX IF NOT EXISTS campaigns_chain_created_block_idx
   ON public.campaigns(chain_id, created_block);
 

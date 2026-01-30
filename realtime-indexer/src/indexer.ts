@@ -168,6 +168,7 @@ async function setStateMax(chainId: number, cursor: string, nextBlock: number) {
 
 async function upsertCampaign(
   chainId: number,
+  factoryAddress: string | null,
   campaign: string,
   token: string,
   creator: string,
@@ -181,11 +182,12 @@ async function upsertCampaign(
   // Current schema expects creator_address to be NOT NULL.
   await pool.query(
     `insert into public.campaigns(
-        chain_id,campaign_address,token_address,creator_address,name,symbol,created_block,created_at_chain,is_active
+        chain_id,factory_address,campaign_address,token_address,creator_address,name,symbol,created_block,created_at_chain,is_active
      )
-     values($1,$2,$3,$4,$5,$6,$7,$8,true)
+     values($1,$2,$3,$4,$5,$6,$7,$8,$9,true)
      on conflict (chain_id,campaign_address) do update
        set token_address=coalesce(excluded.token_address, public.campaigns.token_address),
+           factory_address=coalesce(public.campaigns.factory_address, excluded.factory_address),
            creator_address=coalesce(excluded.creator_address, public.campaigns.creator_address),
            name=coalesce(excluded.name, public.campaigns.name),
            symbol=coalesce(excluded.symbol, public.campaigns.symbol),
@@ -207,6 +209,7 @@ async function upsertCampaign(
            updated_at=now()`,
     [
       chainId,
+      (factoryAddress ? factoryAddress.toLowerCase() : null),
       campaign.toLowerCase(),
       token.toLowerCase(),
       creator.toLowerCase(),
@@ -549,7 +552,7 @@ async function scanFactoryRange(
       const creator = String((parsed.args as any).creator);
       const name = String((parsed.args as any).name);
       const symbol = String((parsed.args as any).symbol);
-      await upsertCampaign(chain.chainId, campaign, token, creator, name, symbol, log.blockNumber, blockTimes.get(log.blockNumber) || null);
+      await upsertCampaign(chain.chainId, chain.factoryAddress ?? null, campaign, token, creator, name, symbol, log.blockNumber, blockTimes.get(log.blockNumber) || null);
     }
 
     await setStateMax(chain.chainId, cursor, end + 1);
@@ -693,7 +696,7 @@ async function syncFactoryCampaignsByCall(
     const createdAtSec = createdAtRaw !== undefined && createdAtRaw !== null ? Number(createdAtRaw) : 0;
     const createdAt = createdAtSec > 0 ? new Date(createdAtSec * 1000) : null;
 
-    await upsertCampaign(chain.chainId, campaign, token, creator, name, symbol, 0, createdAt);
+    await upsertCampaign(chain.chainId, chain.factoryAddress ?? null, campaign, token, creator, name, symbol, 0, createdAt);
     known.add(key);
 
     console.log("Discovered missing campaign via factory registry", {
