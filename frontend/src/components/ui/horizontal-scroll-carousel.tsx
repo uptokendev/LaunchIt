@@ -40,52 +40,6 @@ type CarouselCard = {
 
 const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
 
-// ---- Placeholder data used when there are no on-chain campaigns yet ----
-const PLACEHOLDER_CARDS: CarouselCard[] = [
-  {
-    id: 1,
-    image: "https://images.unsplash.com/photo-1621504450181-5d356f61d307?w=400&h=400&fit=crop",
-    ticker: "LAUNCH",
-    tokenName: "LaunchIt Preview",
-    campaignAddress: ZERO_ADDR,
-    tokenAddress: ZERO_ADDR,
-    contractAddress: ZERO_ADDR,
-    description: "Your first bonding curve token will appear here once deployed.",
-    marketCap: "0",
-    holders: "0",
-    volume: "0",
-    links: {},
-  },
-  {
-    id: 2,
-    image: "https://images.unsplash.com/photo-1509099836639-18ba1795216d?w=400&h=400&fit=crop",
-    ticker: "COMING",
-    tokenName: "Coming Soon",
-    campaignAddress: ZERO_ADDR,
-    tokenAddress: ZERO_ADDR,
-    contractAddress: ZERO_ADDR,
-    description: "Create a campaign to turn this placeholder into a live token.",
-    marketCap: "0",
-    holders: "0",
-    volume: "0",
-    links: {},
-  },
-  {
-    id: 3,
-    image: "https://images.unsplash.com/photo-1516245834210-c4c142787335?w=400&h=400&fit=crop",
-    ticker: "UPONLY",
-    tokenName: "Sample Token",
-    campaignAddress: ZERO_ADDR,
-    tokenAddress: ZERO_ADDR,
-    contractAddress: ZERO_ADDR,
-    description: "This is demo data while we wait for the first launch.",
-    marketCap: "0",
-    holders: "0",
-    volume: "0",
-    links: {},
-  },
-];
-
 // ---------- Helpers ----------
 const isAddress = (s?: string) => /^0x[a-fA-F0-9]{40}$/.test((s ?? "").trim());
 const isZeroAddress = (s?: string) => /^0x0{40}$/.test((s ?? "").trim());
@@ -205,12 +159,7 @@ const Example = () => {
   }, [cards]);
 
   // This is the array we actually render:
-  // - real on-chain campaigns if available
-  // - otherwise placeholder cards
-  const displayCards: CarouselCard[] = useMemo(
-    () => (cards.length ? cards : PLACEHOLDER_CARDS),
-    [cards]
-  );
+  const displayCards: CarouselCard[] = cards;
 
   // Scroll position (initially 0, we correct it in an effect once we know card count)
   const [scrollPosition, setScrollPosition] = useState(0);
@@ -652,32 +601,37 @@ const Example = () => {
         msOverflowStyle: "none",
       }}
     >
-      <div
-        className="flex items-center"
-        style={{
-          transform: `translateX(-${scrollPosition}px)`,
-          transition: isSnapping ? "transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)" : "none",
-          gap: `${CARD_GAP}px`,
-        }}
-      >
-        {/* Render cards 3 times for seamless infinite scroll */}
-        {[...displayCards, ...displayCards, ...displayCards].map((card, index) => {
-          const isCentered = index === centeredTripleIndex;
-          return (
-            <CardView
-              card={card}
-              key={`${card.id}-${index}`}
-              isCentered={isCentered}
-              cardWidth={CARD_WIDTH}
-              isMobile={isMobile}
-              chainIdForStorage={chainIdForStorage}
-              bnbUsdPrice={bnbUsdPrice}
-              onClick={() => handleCardClick(index)}
-            />
-          );
-        })}
-      </div>
-
+      {displayCards.length === 0 ? (
+  <div className="w-full py-10 text-center text-sm text-muted-foreground">
+    No campaigns yet.
+  </div>
+) : (
+  <div
+    className="flex items-center"
+    style={{
+      transform: `translateX(-${scrollPosition}px)`,
+      transition: isSnapping ? "transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)" : "none",
+      gap: `${CARD_GAP}px`,
+    }}
+  >
+    {/* Render cards 3 times for seamless infinite scroll */}
+    {[...displayCards, ...displayCards, ...displayCards].map((card, index) => {
+      const isCentered = index === centeredTripleIndex;
+      return (
+        <CardView
+          card={card}
+          key={`${card.id}-${index}`}
+          isCentered={isCentered}
+          cardWidth={CARD_WIDTH}
+          isMobile={isMobile}
+          chainIdForStorage={chainIdForStorage}
+          bnbUsdPrice={bnbUsdPrice}
+          onClick={() => handleCardClick(index)}
+        />
+      );
+    })}
+  </div>
+)}
       {/* Optional: lightweight status (doesn't affect layout) */}
       {campaignError ? (
         <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[10px] text-muted-foreground bg-background/40 border border-border/40 rounded-full px-2 py-0.5">
