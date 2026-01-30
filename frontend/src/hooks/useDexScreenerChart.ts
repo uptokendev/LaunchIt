@@ -1,9 +1,4 @@
 import { useEffect, useState } from "react";
-import { USE_MOCK_DATA } from "@/config/mockConfig";
-
-// Mock demo pair
-const MOCK_BASE_URL =
-  "https://dexscreener.com/bsc/0x7dff3085e3fa13ba0d0c4a0f9baccb872ff3351e";
 
 // "Chart only" query params
 const CHART_QUERY =
@@ -34,13 +29,6 @@ export function useDexScreenerChart(tokenAddress?: string): DexChartState {
     setError(undefined);
 
     if (!tokenAddress) return;
-
-    // MOCK MODE – always show the same demo pair
-    if (USE_MOCK_DATA) {
-      setBaseUrl(MOCK_BASE_URL);
-      setUrl(buildChartOnlyUrl(MOCK_BASE_URL));
-      return;
-    }
 
     let cancelled = false;
 

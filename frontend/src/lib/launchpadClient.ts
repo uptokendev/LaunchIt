@@ -36,7 +36,7 @@ export type CampaignInfo = {
 
   createdAt?: number;
 
-  // Optional UI-only metadata (primarily populated in mock mode)
+  // Optional UI-only metadata 
   holders?: string;
   volume?: string;
   marketCap?: string;

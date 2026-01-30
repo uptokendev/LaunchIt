@@ -1,6 +1,5 @@
 import { Contract, ethers } from "ethers";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { USE_MOCK_DATA } from "@/config/mockConfig";
 import { getReadProvider } from "@/lib/readProvider";
 import { getActiveChainId, type SupportedChainId } from "@/lib/chainConfig";
 
@@ -46,13 +45,6 @@ export function useDexPairTrades(args: Args) {
 
   useEffect(() => {
     if (!enabled) return;
-
-    if (USE_MOCK_DATA) {
-      setPoints([]);
-      setLoading(false);
-      setError(null);
-      return;
-    }
 
     if (!isAddress(tokenAddress) || !isAddress(pairAddress)) {
       setPoints([]);

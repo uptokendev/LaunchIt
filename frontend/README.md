@@ -19,7 +19,6 @@ src/
 │       ├── loaders/    # Loading indicators
 │       └── progress/   # Progress bar components
 ├── constants/          # Application constants and configuration
-│   ├── mockData.ts     # Mock data for development
 │   ├── navigation.ts   # Navigation configuration
 │   ├── processingStages.ts  # Token processing stages
 │   └── validation.ts   # Form validation rules
