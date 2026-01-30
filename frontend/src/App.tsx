@@ -17,6 +17,7 @@ import UpDashboard from "./pages/UpDashboard";
 import League from "./pages/League";
 import Profile from "./pages/Profile";
 import TokenDetails from "./pages/TokenDetails";
+import Playbook from "@/pages/Playbook";
 import NotFound from "./pages/NotFound";
 import { Sidebar } from "@/components/Sidebar";
 import { TopBar } from "@/components/TopBar";
@@ -59,6 +60,7 @@ const App = () => {
                   <Route path="/league" element={<League />} />
                   <Route path="/profile" element={<Profile />} />
                   <Route path="/token/:campaignAddress" element={<TokenDetails />} />
+                  <Route path="/playbook" element={<Playbook />} />
                   {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                   <Route path="*" element={<NotFound />} />
                 </Routes>
