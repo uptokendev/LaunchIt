@@ -244,7 +244,7 @@ const Create = () => {
               asChild
               className="bg-accent hover:bg-accent/90 text-accent-foreground font-retro text-base md:text-lg px-6 md:px-8 py-4 md:py-6 rounded-xl shadow-lg w-full md:w-auto"
             >
-              <Link to="/playbook">Read Playbook</Link>
+              <Link to="/Playbook">Read Playbook</Link>
             </Button>
           </div>
 
