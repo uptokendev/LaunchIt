@@ -49,7 +49,7 @@ export const socialLinks: SocialItem[] = [
     svgUrl: telegramIcon,
   },
   {
-    href: "/how-it-works",
+    href: "/playbook",
     ariaLabel: "Documentation",
     tooltip: "Docs",
     color: "#10b981",

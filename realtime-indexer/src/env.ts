@@ -47,5 +47,10 @@ export const ENV = {
   // Lower default confirmations for faster UI updates (especially on testnet).
   CONFIRMATIONS: Number(process.env.CONFIRMATIONS || "1"),
 
+  // Optional telemetry (recommended). If not set, telemetry is disabled.
+  TELEMETRY_INGEST_URL: process.env.TELEMETRY_INGEST_URL || "",
+  TELEMETRY_TOKEN: process.env.TELEMETRY_TOKEN || "",
+  TELEMETRY_INTERVAL_MS: Number(process.env.TELEMETRY_INTERVAL_MS || "15000"),
+
   PORT: Number(process.env.PORT || "3000")
 };

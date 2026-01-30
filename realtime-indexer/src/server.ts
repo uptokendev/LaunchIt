@@ -4,9 +4,29 @@ import { ENV } from "./env.js";
 import { pool } from "./db.js";
 import { ablyRest, tokenChannel, leagueChannel } from "./ably.js";
 import { runIndexerOnce } from "./indexer.js";
+import { startTelemetryReporter, type TelemetrySnapshot } from "./telemetry.js";
 import type { Request, Response, NextFunction, RequestHandler } from "express";
 
 const app = express();
+
+// ---------------------------------------------------------------------------
+// Minimal in-process metrics (safe to expose)
+// ---------------------------------------------------------------------------
+let reqCount1m = 0;
+let errCount1m = 0;
+
+setInterval(() => {
+  reqCount1m = 0;
+  errCount1m = 0;
+}, 60_000);
+
+app.use((req, res, next) => {
+  reqCount1m++;
+  res.on("finish", () => {
+    if (res.statusCode >= 500) errCount1m++;
+  });
+  next();
+});
 
 const wrap =
   (fn: (req: Request, res: Response, next: NextFunction) => Promise<any>): RequestHandler =>
@@ -46,6 +66,12 @@ app.use(
   })
 );
 app.options("*", cors());
+
+// Extremely lightweight health (no DB). Safe for frequent monitoring.
+app.get("/healthz", (_req, res) => {
+  res.json({ ok: true });
+});
+
 app.get("/health", async (_req, res) => {
   try {
     const r = await pool.query("select 1 as ok");
@@ -54,6 +80,52 @@ app.get("/health", async (_req, res) => {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
+
+// -----------------------------------------------------------
+// Telemetry support (optional)
+// -----------------------------------------------------------
+let lastIndexerRunAt = 0;
+let lastIndexerErrorAt = 0;
+
+async function getLastIndexedBlock(): Promise<number | null> {
+  try {
+    const r = await pool.query(
+      `select cursor, last_indexed_block from public.indexer_state where chain_id=$1 and cursor in ('factory','votes')`,
+      [97]
+    );
+    if (!r.rowCount) return null;
+    // Use the minimum of known cursors as the conservative "indexed" height.
+    let m: number | null = null;
+    for (const row of r.rows) {
+      const v = Number(row.last_indexed_block || 0);
+      if (!Number.isFinite(v) || v <= 0) continue;
+      m = m == null ? v : Math.min(m, v);
+    }
+    return m;
+  } catch {
+    return null;
+  }
+}
+
+async function getRpcHeadBlock(): Promise<number | null> {
+  try {
+    const first = String(ENV.BSC_RPC_HTTP_97 || "").split(",").map((s) => s.trim()).filter(Boolean)[0];
+    if (!first) return null;
+    const body = { jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] };
+    const r = await fetch(first, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) return null;
+    const j: any = await r.json();
+    const hex = j?.result;
+    if (typeof hex !== "string" || !hex.startsWith("0x")) return null;
+    return parseInt(hex, 16);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Ably token auth endpoint
@@ -332,6 +404,76 @@ app.listen(ENV.PORT, "0.0.0.0", () => {
   console.log(`realtime-indexer listening on 0.0.0.0:${ENV.PORT}`);
 });
 
+// ---------------------------------------------------------------------------
+// Telemetry snapshot (optional)
+// ---------------------------------------------------------------------------
+let lastIndexerRunAt = 0;
+let lastIndexerErrorAt = 0;
+let lastIndexerErrorMsg: string | null = null;
+
+async function getLastIndexedBlock(chainId: number): Promise<number | null> {
+  try {
+    const r = await pool.query(
+      `select cursor,last_indexed_block from public.indexer_state where chain_id=$1 and cursor in ('factory','votes')`,
+      [chainId]
+    );
+    if (!r.rowCount) return null;
+    // Conservative: take min of known cursors so lag isn't understated
+    const vals = r.rows.map((x: any) => Number(x.last_indexed_block)).filter((n: any) => Number.isFinite(n));
+    if (!vals.length) return null;
+    return Math.min(...vals);
+  } catch {
+    return null;
+  }
+}
+
+async function getRpcHeadBlock(): Promise<number | null> {
+  const first = String(ENV.BSC_RPC_HTTP_97 || "").split(",")[0]?.trim();
+  if (!first) return null;
+  try {
+    const body = { jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] };
+    const resp = await fetch(first, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) return null;
+    const j: any = await resp.json();
+    const hex = j?.result;
+    if (typeof hex !== "string" || !hex.startsWith("0x")) return null;
+    return parseInt(hex, 16);
+  } catch {
+    return null;
+  }
+}
+
+startTelemetryReporter(async () => {
+  const ts = Math.floor(Date.now() / 1000);
+  const head = await getRpcHeadBlock();
+  const last = await getLastIndexedBlock(97);
+  const lag = head != null && last != null ? Math.max(0, head - last) : null;
+
+  const snap: TelemetrySnapshot = {
+    service: "realtime-indexer",
+    ts,
+    ok: true,
+    rps_1m: reqCount1m / 60,
+    errors_1m: errCount1m,
+    head_block: head ?? undefined,
+    last_indexed_block: last ?? undefined,
+    lag_blocks: lag ?? undefined,
+    last_indexer_run_ms_ago: lastIndexerRunAt ? Date.now() - lastIndexerRunAt : undefined,
+    last_indexer_error_ms_ago: lastIndexerErrorAt ? Date.now() - lastIndexerErrorAt : undefined,
+  };
+
+  // If we have a recent error, mark ok=false but keep reporting.
+  if (lastIndexerErrorAt && Date.now() - lastIndexerErrorAt < 5 * 60_000) {
+    snap.ok = false;
+  }
+
+  return snap;
+});
+
 // Indexer loop
 // NOTE: Keep this conservative for public RPCs. We also avoid overlap.
 let running = false;
@@ -341,9 +483,12 @@ setInterval(async () => {
   if (running) return;
   running = true;
   try {
+    lastIndexerRunAt = Date.now();
     await runIndexerOnce();
   } catch (e) {
     console.error("indexer loop error", e);
+    lastIndexerErrorAt = Date.now();
+    lastIndexerErrorMsg = String((e as any)?.message || e);
   } finally {
     running = false;
   }
