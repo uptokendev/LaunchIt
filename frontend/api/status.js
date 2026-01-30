@@ -1,4 +1,4 @@
-import { json, badMethod } from "./_http.js";
+import { json, badMethod } from "../server/http.js";
 
 function getBearerToken(req) {
   const h = String(req.headers?.authorization || "");

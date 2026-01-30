@@ -1,5 +1,5 @@
-import { pool } from "./_db.js";
-import { badMethod, getQuery, json } from "./_http.js";
+import { pool } from "../server/db.js";
+import { badMethod, getQuery, json } from "../server/http.js";
 
 const CATEGORY_SET = new Set(["straight_up", "fastest_graduation", "largest_buy"]);
 const PERIOD_SET = new Set(["weekly", "monthly", "all", "all_time", "alltime"]);

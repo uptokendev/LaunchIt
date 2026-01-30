@@ -1,5 +1,5 @@
-import { pool } from "../_db.js";
-import { badMethod, isAddress, json, readJson } from "../_http.js";
+import { pool } from "../../server/db.js";
+import { badMethod, isAddress, json, readJson } from "../../server/http.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return badMethod(res);

@@ -1,5 +1,5 @@
 import Ably from "ably";
-import { badMethod, getQuery, isAddress, json } from "../_http.js";
+import { badMethod, getQuery, isAddress, json } from "../../server/http.js";
 
 function p(v) {
   return String(v ?? "").trim();

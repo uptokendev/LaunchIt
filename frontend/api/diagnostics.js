@@ -79,69 +79,6 @@ function normalizeHttpUrl(input) {
   return "https://" + s;
 }
 
-function renderDiagnosticsUi(token) {
-  // Minimal UI to avoid burning another Serverless Function on Vercel Hobby.
-  // Access via /api/diagnostics-ui?token=... (rewrite → /api/diagnostics?ui=1&token=...)
-  const safeToken = String(token || "");
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>UPMEME Diagnostics</title>
-    <style>
-      :root{--bg:#0b1020;--panel:#0f1733;--text:#e8ecff;--muted:#a9b3da;--line:rgba(255,255,255,.08);--shadow:0 20px 70px rgba(0,0,0,.35);--mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;--sans:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;}
-      body{margin:0;background:radial-gradient(1200px 700px at 20% 0%, rgba(96,165,250,.12), transparent 60%),radial-gradient(900px 600px at 90% 10%, rgba(34,197,94,.10), transparent 55%),var(--bg);color:var(--text);font-family:var(--sans);}
-      .wrap{max-width:1100px;margin:24px auto;padding:0 16px;}
-      header{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;margin-bottom:12px;}
-      h1{margin:0;font-size:18px;}
-      .sub{margin-top:6px;color:var(--muted);font-size:12px;}
-      button{border:1px solid var(--line);background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));color:var(--text);padding:10px 12px;border-radius:12px;cursor:pointer;box-shadow:0 10px 30px rgba(0,0,0,.25);font-size:13px;}
-      button:hover{border-color:rgba(255,255,255,.18);}
-      .card{background:linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02));border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);overflow:hidden;}
-      .card .body{padding:14px;}
-      pre{margin:0;padding:12px;border-radius:14px;border:1px solid var(--line);background:rgba(0,0,0,.20);color:var(--text);overflow:auto;font-size:12px;line-height:1.5;max-height:70vh;font-family:var(--mono);}
-      .mono{font-family:var(--mono);}
-    </style>
-  </head>
-  <body>
-    <div class="wrap">
-      <header>
-        <div>
-          <h1>UPMEME Diagnostics</h1>
-          <div class="sub">Reads <span class="mono">/api/diagnostics?token=…</span> and prints JSON (kept minimal to stay under Vercel Hobby function limit).</div>
-        </div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;">
-          <button id="refreshBtn">Refresh</button>
-          <button id="copyBtn">Copy JSON</button>
-        </div>
-      </header>
-      <div class="card"><div class="body"><pre id="out">Loading…</pre></div></div>
-    </div>
-    <script>
-      const TOKEN = ${JSON.stringify(safeToken)};
-      const out = document.getElementById('out');
-      async function load(){
-        out.textContent = 'Loading…';
-        try{
-          const r = await fetch('/api/diagnostics?token=' + encodeURIComponent(TOKEN), { cache: 'no-store' });
-          const t = await r.text();
-          try{ out.textContent = JSON.stringify(JSON.parse(t), null, 2); }
-          catch{ out.textContent = t; }
-        }catch(e){
-          out.textContent = String(e && (e.stack || e.message) || e);
-        }
-      }
-      document.getElementById('refreshBtn').onclick = load;
-      document.getElementById('copyBtn').onclick = async () => {
-        try{ await navigator.clipboard.writeText(out.textContent || ''); }catch{}
-      };
-      load();
-    </script>
-  </body>
-</html>`;
-}
-
 async function pgCheck() {
   const DATABASE_URL = process.env.DATABASE_URL || "";
   if (!DATABASE_URL) {
@@ -396,12 +333,56 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: "Not found" });
     }
 
-    // Serve UI from the same function (Vercel Hobby has a strict function-count limit)
-    if (String(req.query?.ui || "") === "1") {
+
+    // Optional UI: /api/diagnostics-ui?token=... is rewritten here as /api/diagnostics?ui=1&token=...
+    // We keep it inside this single function to save function slots on Vercel Hobby.
+    const ui = String(req.query?.ui || "");
+    if (ui === "1") {
+      const token = got;
+      const page = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>UPMEME Diagnostics</title>
+  <style>
+    body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; margin:0; padding:24px; background:#0b1020; color:#e8ecff;}
+    h1{margin:0 0 8px 0; font-size:18px;}
+    .muted{color:#a9b3da; font-size:12px; margin-bottom:16px;}
+    pre{white-space:pre-wrap; word-break:break-word; background:rgba(0,0,0,.25); border:1px solid rgba(255,255,255,.10); padding:12px; border-radius:12px;}
+    button{border:1px solid rgba(255,255,255,.14); background:rgba(255,255,255,.06); color:#e8ecff; padding:8px 10px; border-radius:10px; cursor:pointer;}
+    button:hover{background:rgba(255,255,255,.10);}
+  </style>
+</head>
+<body>
+  <h1>UPMEME Diagnostics</h1>
+  <div class="muted">This is a private page. It fetches JSON from <code>/api/diagnostics</code>. Keep your token secret.</div>
+  <div style="display:flex; gap:10px; margin-bottom:12px;">
+    <button onclick="load()">Refresh</button>
+    <button onclick="copy()">Copy JSON</button>
+  </div>
+  <pre id="out">Loading…</pre>
+  <script>
+    const token = ${JSON.stringify(token)};
+    async function load(){
+      const r = await fetch('/api/diagnostics?token=' + encodeURIComponent(token), { cache: 'no-store' });
+      const t = await r.text();
+      try{ document.getElementById('out').textContent = JSON.stringify(JSON.parse(t), null, 2); }
+      catch{ document.getElementById('out').textContent = t; }
+    }
+    async function copy(){
+      const t = document.getElementById('out').textContent;
+      try{ await navigator.clipboard.writeText(t); alert('Copied'); }catch{ alert('Copy failed'); }
+    }
+    load();
+  </script>
+</body>
+</html>`;
+
       res.statusCode = 200;
       res.setHeader("content-type", "text/html; charset=utf-8");
-      res.end(renderDiagnosticsUi(got));
-      return;
+      res.setHeader("cache-control", "no-store");
+      return res.end(page);
     }
 
     const out = {

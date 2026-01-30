@@ -1,5 +1,5 @@
-import { pool } from "./_db.js";
-import { badMethod, getQuery, json } from "./_http.js";
+import { pool } from "../server/db.js";
+import { badMethod, getQuery, json } from "../server/http.js";
 
 const SORT_MAP = {
   trending: "trending_score",

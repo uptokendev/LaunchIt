@@ -1,6 +1,6 @@
 import crypto from "crypto";
-import { pool } from "../_db.js";
-import { badMethod, getQuery, isAddress, json } from "../_http.js";
+import { pool } from "../../server/db.js";
+import { badMethod, getQuery, isAddress, json } from "../../server/http.js";
 
 function makeNonce() {
   return crypto.randomBytes(16).toString("hex");

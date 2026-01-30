@@ -1,6 +1,6 @@
 import { ethers } from "ethers";
-import { pool } from "./_db.js";
-import { badMethod, getQuery, isAddress, json, readJson } from "./_http.js";
+import { pool } from "../server/db.js";
+import { badMethod, getQuery, isAddress, json, readJson } from "../server/http.js";
 
 function buildCommentMessage({ chainId, address, campaignAddress, nonce, body }) {
   const bodyPreview = String(body ?? "").replace(/\s+/g, " ").trim().slice(0, 180);
