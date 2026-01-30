@@ -779,8 +779,8 @@ th:nth-child(3), td:nth-child(3){ width:56%; }
           ? badge(levelFromLatency(rpc.latencyMs, 800, 2000), "OK")
           : badge(rpc?.skipped ? "warn" : "bad", rpc?.skipped ? "Skipped" : "FAIL"),
         rpc?.ok
-          ? ("If latency stays high or timeouts: add better RPC(s) / rotate providers; consider rate limits. Head: <span class=\"mono\">" + (rpc.head_block ?? "—") + "</span>")
-          : "Set <span class=\"mono\">BSC_RPC_HTTP_97</span> on Vercel to validate RPC independently of the indexer.",
+          ? ("If latency stays high or timeouts: add better RPC(s) / rotate providers; consider rate limits. Head: <span class='mono'">" + (rpc.head_block ?? "—") + "</span>")
+          : "Set <span class='mono'">BSC_RPC_HTTP_97</span> on Vercel to validate RPC independently of the indexer.",
       ]);
 
       rows.push([
@@ -805,7 +805,7 @@ th:nth-child(3), td:nth-child(3){ width:56%; }
           ? badge(lagLevel, lagLevel === "ok" ? "OK" : lagLevel === "warn" ? "Rising" : "High")
           : badge(tel?.skipped ? "warn" : "bad", tel?.skipped ? "Skipped" : "FAIL"),
         tel?.ok
-          ? ("If lag steadily increases: CPU bound or RPC throttled. Scale indexer and/or improve RPC. Errors/1m: <span class=\"mono\">" + (tel.indexer?.errors_1m ?? "—") + "</span>, mem: <span class=\"mono\">" + (tel.indexer?.mem_mb ?? "—") + "</span>MB")
+          ? ("If lag steadily increases: CPU bound or RPC throttled. Scale indexer and/or improve RPC. Errors/1m: <span class='mono'">" + (tel.indexer?.errors_1m ?? "—") + "</span>, mem: <span class='mono'">" + (tel.indexer?.mem_mb ?? "—") + "</span>MB")
           : "Set TELEMETRY_STATUS_URL on Vercel to surface indexer lag/errors/memory.",
       ]);
 
