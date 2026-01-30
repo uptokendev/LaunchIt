@@ -52,9 +52,9 @@ if (!_pool) {
   // set PG_SSL_ALLOW_SELF_SIGNED=1 to keep TLS on but skip certificate verification.
   const allowSelfSigned = String(process.env.PG_SSL_ALLOW_SELF_SIGNED || "").trim() === "1";
 
-  console.log("[api/_db] PG host:", host, "port:", port, "db:", database);
+  console.log("[server/db] PG host:", host, "port:", port, "db:", database);
   console.log(
-    "[api/_db] CA loaded:",
+    "[server/db] CA loaded:",
     Boolean(ca),
     "CA bytes:",
     ca ? ca.length : 0,
@@ -84,7 +84,7 @@ if (!_pool) {
 
   globalThis.__upmeme_pool = _pool;
 
-  _pool.on("error", (err) => console.error("[api/_db] Pool error", err));
+  _pool.on("error", (err) => console.error("[server/db] Pool error", err));
 }
 
 export const pool = _pool;
